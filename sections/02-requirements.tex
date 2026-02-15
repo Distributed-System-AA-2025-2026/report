@@ -1,102 +1,127 @@
 \section{Requirements Elicitation and Analysis}\label{requirements}
 
+\subsection{Room Server}
+This section outlines the specific requirements for the \textit{Room Server} component and the underlying distributed architecture.
+This component is responsible for maintaining the authoritative game state, processing player inputs, and broadcasting updates to clients.
+
+\subsubsection{Functional Requirements}
+\begin{enumerate}
+  \item \textbf{Game Loop Execution}
+        \begin{itemize}
+          \item The system must run a centralized game loop (tick-based) that updates the game state at a fixed frequency (e.g., 30 ticks per second).
+          \item \textit{Acceptance Criterion:} The server logs show a consistent tick duration, and game physics (bomb timers, movement) progress uniformly.
+        \end{itemize}
+
+  \item \textbf{Input Processing}
+        \begin{itemize}
+          \item The Room Server must accept concurrent inputs (movement, bomb placement) from up to 4 connected clients.
+          \item \textit{Acceptance Criterion:} When multiple clients send commands simultaneously, the server processes them sequentially within the same tick without dropping data.
+        \end{itemize}
+
+  \item \textbf{State Broadcasting}
+        \begin{itemize}
+          \item The system must broadcast the full game state to all connected clients after every tick.
+          \item \textit{Acceptance Criterion:} All connected clients receive a game state packet after each tick completion.
+        \end{itemize}
+
+  \item \textbf{Dynamic Player Management}
+        \begin{itemize}
+          \item The system must handle the sudden disconnection of a player by removing their entity from the game board or marking them as "inactive".
+          \item \textit{Acceptance Criterion:} If a client process is killed, the server detects the broken pipe, logs the event, and the remaining players see the disconnected avatar disappear.
+        \end{itemize}
+\end{enumerate}
+
+\subsubsection{Non-Functional Requirements}
+\begin{enumerate}
+  \item \textbf{Consistency}
+        \begin{itemize}
+          \item The game state must be strictly consistent across all clients. The server is the single source of truth.
+          \item \textit{Acceptance Criterion:} Clients never observe conflicting states (e.g., one client sees a bomb while another does not) and all clients see the same game state after each tick, as the server broadcasts the authoritative snapshot.
+        \end{itemize}
+
+  \item \textbf{Responsiveness}
+        \begin{itemize}
+          \item The end-to-end latency (input $\rightarrow$ server processing $\rightarrow$ state update) should be minimized to ensure playability.
+          \item \textit{Acceptance Criterion:} The game feels responsive to keyboard inputs on a standard LAN connection.
+        \end{itemize}
+
+  \item \textbf{Fairness}
+        \begin{itemize}
+          \item The order of event processing must be fair: game actions are processed in a deterministic, and consistent manner.
+          \item \textit{Acceptance Criterion:} Simultaneous conflicting actions are resolved consistently by the server logic (e.g. First-In-First-Served Queue).
+        \end{itemize}
+\end{enumerate}
+
+\subsubsection{Implementation Constraints}
 \begin{itemize}
-  \item The requirements must explain \textbf{what} (not how) the software
-  being produced should do.
-  %
-  \begin{itemize}
-    \item you should not focus on the particular problems, but exclusively on
-    what you want the application to do.
-  \end{itemize}
-
-  \item Requirements must be clearly identified, and possibly numbered
-
-  \item Requirements are divided into:
-  %
-  \begin{itemize}
-    \item \textbf{Functional}: some functionality the software should provide to the user
-
-    \item \textbf{Non-functional}: requirements that do not directly concern behavioural aspects, such as consistency, availability, etc.
-
-    \item \textbf{Implementation}: constrain the entire phase of system realization, 
-    for instance by requiring the use of a specific programming language and/or a specific software tool
-    %
-    \begin{itemize}
-      \item these constraints should be adequately justified by political / economic / administrative reasons\ldots{}
-      \item \ldots{} otherwise, implementation choices should emerge \emph{as  a consequence of} design
-    \end{itemize}
-  \end{itemize}
-
-  \item If there are domain-specific terms, these should be explained in a glossary
-  
-  \item Each requirement must have its own \textbf{acceptance criterion}
-  %
-  \begin{itemize}
-    \item these will be important for the validation phase
-  \end{itemize}
+  \item \textbf{Programming Language}
+        \begin{itemize}
+          \item This component had been implemented in \textbf{Python}.
+          \item \textit{Justification:} Python offers high-level abstractions for socket programming and threading, allowing for rapid prototyping of distributed logic.
+        \end{itemize}
 \end{itemize}
 
-\subsection{Relevant Distributed System Features}
-\label{ds-features}
+\subsubsection{Relevant Distributed System Features}
+\label{ds-features-room-server}
 
-Motivate which distributed system features are relevant for your project, and which are not.
-%
+The \textit{Room Server} distributed architecture features are critical to the design and implementation of the authorative game state management.
+
 \begin{itemize}
-  \item transparency
-  \begin{itemize}
-    \item does your system need to hide distribution details from users or developers?
-    \item is it important that failures, location, or replication are invisible?
-  \end{itemize}
+  \item \textbf{Transparency}
+        \begin{itemize}
+          \item It is essential that this system hides the distributed nature of the game state management from clients.
+                Clients invoke game actions (e.g., \texttt{MOVE\_PLAYER(\dots)}) that are validate by the Room Server, and then executed in the new snapshot.
+          \item The Room Server must handle multiple players simultaneously without them noticing that they are competing for shared resources.
+        \end{itemize}
 
-  \item fault tolerance, dependability -- availability, reliability, integrity, maintainability, safety
-  \begin{itemize}
-    \item what happens if a component fails?
-    is uninterrupted service required?
-    \item is data loss or corruption unacceptable?
-    \item how quickly must the system recover from faults?
-  \end{itemize}
+  \item \textbf{Fault Tolerance}
+        \begin{itemize}
+          \item If a client crashes (Application Failure) or a link drops (Network Failure), the Room Server must continue execution for the remaining players.
+                If the Room Server itself fails, the last game state is preserved on disk, so the Hub can restart the Room Server and clients can reconnect to a resumed and valid match.
+                The saved state is considered "too old" if it was saved more than a fixed amount of time ago (e.g., 30 seconds).
+                Hanging clients are detected by the server via socket timeouts, and are removed from the game after a short grace period.
+          \item The system should recover from client failures within a few seconds, allowing the game to continue with minimal disruption.
+                If the Room Server fails, it should be able to restart and restore the last valid game state within a fixed amount of time; if the saved state is too old, a new game should be started instead.
+        \end{itemize}
 
-  \item scalability
-  \begin{itemize}
-    \item will the system need to handle increasing numbers of users, requests, or data?
-    \item is it expected to grow over time?
-  \end{itemize}
+  \item \textbf{Scalability}
+        \begin{itemize}
+          \item The architecture supports increasing the number of concurrent games by spawning more \texttt{Game Engine} threads.
+        \end{itemize}
 
-  \item security, trust
-  \begin{itemize}
-    \item is sensitive data being processed or stored?
-    \item are there multiple user roles with different permissions?
-    \item is authentication or authorization required?
-  \end{itemize}
+  \item \textbf{Security and Trust}
+        \begin{itemize}
+          \item The system assumes a trusted environment where clients are not malicious.
+                Therefore, no authentication or encryption is implemented in this version.
+                Even though clients could potentially send malformed packets or attempt to cheat, the server validates all inputs and maintains authority over the game state, preventing any client-side manipulation from affecting the overall game integrity.
+                This ensures that not-cheating players are protected from malicious behavior by other clients.
+        \end{itemize}
 
-  \item resource sharing
-  \begin{itemize}
-    \item do multiple users or components need access to shared resources?
-    \item is coordination or synchronization needed?
-  \end{itemize}
+  \item \textbf{Resource Sharing}
+        \begin{itemize}
+          \item The primary shared resource is the \textbf{Game Snapshot}.
+                Multiple clients read and attempt to write (place bombs, destroy walls) to this shared state.
+          \item \textit{Synchronization} The Game Engine thread is the only one that modifies the game state, while client handler threads only read the state and enqueue player actions.
+                This design avoids the need for complex synchronization mechanisms on the game state, and provides a clear separation of concerns. 
+                Also the server processes player actions sequentially within the game loop, ensuring that all updates to the game state are atomic and consistent (tick-based loop).
+        \end{itemize}
 
-  \item openness, interoperability, heterogeneity of components
-  \begin{itemize}
-    \item Will your system interact with external systems or use components built with different technologies?
-    \item Is standardization or compatibility important?
-  \end{itemize}
+  \item \textbf{Openness and Interoperability}
+        \begin{itemize}
+          \item The system is designed to be self-contained, with no external dependencies or interoperability requirements.
+                However, the communication protocol is simple enough that it could be extended in the future to support clients implemented in other languages or platforms.
+                Everything is as generic as possible, so the Room Server could be replaced with a different implementation (e.g., in C++ or Java) as long as it adheres to the same communication protocol.
+        \end{itemize}
 
-  \item evolvability, maintainability
-  \begin{itemize}
-    \item Will the system need to be updated or extended after deployment?
-    \item Is long-term maintenance a concern?
-  \end{itemize}
+  \item \textbf{Evolvability and Maintainability}
+        \begin{itemize}
+          \item The codebase is structured in a modular way, separating the game logic from the networking code (server management).
+                This allows for easier maintenance and future extensions.
+        \end{itemize}
 
-  \item performance, concurrency, computation / communication efficiency, bandwidth
-  \begin{itemize}
-    \item Are there strict requirements on response time or throughput?
-    \item Will many operations happen in parallel?
-    \item Is network usage a concern?
-  \end{itemize}
-
-  \item economy, costs  
-  \begin{itemize}
-    \item Are there budget constraints for development, deployment, or operation?
-    \item Is minimizing resource usage important?
-  \end{itemize}
+  \item \textbf{Performance and Concurrency}
+        \begin{itemize}
+          \item The system is highly parallelizable, with the Room Server handling multiple clients concurrently while maintaining a single authoritative game state.
+                The use of a tick-based game loop allows for benchmarked performance and simplifies the handling of concurrent actions.
+        \end{itemize}
 \end{itemize}
