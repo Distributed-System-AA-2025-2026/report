@@ -1,37 +1,72 @@
 \section{Concept}\label{concept}
 
-Here you should explain:
+\subsection{Product Type}
+The product developed is a \textbf{Distributed Command-Line Interface (CLI) Game}. 
+The application is designed as a real-time multiplayer system where users interact with the game environment through a terminal-based interface using keyboard inputs.
+The architecture is distributed, and designed to be executed across a cluster of distinct machines. 
 
+This design allows players located in geographically diverse locations to connect to a remote infrastructure, enabling synchronous, low-latency interaction within a shared virtual environment.
+
+\subsection{Use Case Description}
+The software facilitates a real-time multiplayer gaming experience. 
+The core use case involves multiple clients connecting from heterogeneous devices (e.g., laptops, desktops) to a central game infrastructure.
+
+Regarding data persistence, the system is designed to be \textbf{ephemeral}. 
+It does not rely on long-term persistent storage for game history. 
+Instead, the game state is transient, existing only for the lifecycle of a match.
+The only exception is the \textit{User ID}, and the game state, which are temporarily retained by the \textit{Room Server} to manage session continuity and handle transient disconnections.
+
+The system defines a single user role:
 \begin{itemize}
-  \item The type of product developed with that project, for example (non-exhaustive):
-  %
-  \begin{itemize}
-    \item Application (with GUI, be it mobile, web, or desktop)
-    \item Command-line application (CLI could be used by humans or scripts)
-    \item Library
-    \item Web-service(s)
-  \end{itemize}
+  \item \textbf{Player}: An entity responsible for establishing a connection to the server, issuing commands (e.g., movement, placement of bombs), and rendering the received game state updates on the local CLI.
+\end{itemize}
 
-  \item Use case description:
-  %
-  \begin{itemize}
-    \item \emph{what} is the software doing?
-    \item \emph{where} are the users?
-    \item \emph{when} and \emph{how frequently} do they interact with the system?
-    \item \emph{how} do they \emph{interact} with the system? which \emph{devices} are they using?
-    \item does the system need to \emph{store} user's \textbf{data}? \emph{which}? \emph{where}?
-    \item most likely, there will be \emph{multiple} \textbf{roles}
-  \end{itemize}
+\subsection{Need for Distribution}
+The adoption of a distributed architecture is a fundamental requirement for this project, driven by the inherent nature of a real-time multiplayer environment. 
+The system implements a \textbf{two-tier architecture}, distinguishing between a \textit{Hub Server} and distinct \textit{Room Servers}.
 
-  \item Why is distribution needed?
-  %
-  \begin{itemize}
-    \item geographically distributed environments?
-    \item computation speedup?
-    \item resource sharing?
-    \item fault tolerance?
-    \item other reasons?
-  \end{itemize}
-  %
-  In any case, please elaborate.
+The necessity for distribution is justified by the following factors:
+\begin{itemize}
+  \item \textbf{Geographically Distributed Environments}: The primary driver for distribution is the need to connect users located in different physical locations. 
+  The system must synchronize the game state across a network of heterogeneous client devices, ensuring a consistent real-time experience despite physical separation and network latency.
+
+  \item \textbf{Scalability and Resource Sharing}: Distribution allows the system to decouple matchmaking from game execution. 
+  By employing a multi-server approach (Hub vs. Rooms), the computational load is spread across multiple components rather than being concentrated on a single machine. 
+  This ensures that the system can scale horizontally, supporting a higher number of concurrent matches without degrading performance.
+
+  \item \textbf{Fault Tolerance}: The two-tier structure enhances system reliability through isolation. 
+  A failure within a specific \textit{Room Server} is contained to that single match, preventing it from cascading to the \textit{Hub Server} or other active games. 
+  This ensures that the service remains available for new users even under partial failure conditions.
+
+  \item \textbf{Computation Speedup}: While high-performance computing is not the primary objective (matches are lightweight) distribution enables efficient parallelism. 
+  Independent game sessions run concurrently, ensuring that the processing loop of one match does not become a bottleneck for others.
+\end{itemize}
+
+\subsubsection{Hub Server}
+The \textbf{Hub Server} acts as the entry point for the distributed system. 
+Its primary responsibility is \textbf{Availability}, by a CAP theorem perspective it is \textbf{AP-oriented}. 
+It handles client connection requests, manages the "Lobby" state, and orchestrates the creation of new game instances.
+
+The Hub Server serves as a load balancer and service discovery mechanism.
+When a match is formed, the Hub spawns a new \textit{Room Server} (or allocates an existing one) and redirects the participating clients to that specific instance. 
+This component is designed to be lightweight and highly responsive, ensuring that users can always connect to the platform, even if specific game rooms are currently experiencing high load.
+
+\subsubsection{Room Server}
+The \textbf{Room Server} is the core execution unit responsible for managing the game state and facilitating synchronized communication between clients. 
+It acts as the single \textbf{authoritative component} for a specific match, receiving player actions and applying them deterministically within a strict tick-based loop.
+
+The Room Server guarantees that all players view a consistent evolution of the game state. 
+This is essential for preventing weird scenarios and ensuring fairness (e.g., preventing two players placing a bomb at the same time in the same spot).
+The design choice for the Room Server is then \textbf{CP-oriented} (Consistency and Partition Tolerance). 
+It prioritizes strong consistency at the granularity of a match, even at the cost of temporarily excluding clients with unstable connections.
+
+\textbf{Technical implementation details:}
+\begin{itemize}
+  \item \textbf{Communication}: Clients connect via persistent TCP channels.
+  \item \textbf{Protocol}: The system exchanges compact messages (using Protocol Buffers), allowing the server to efficiently collect inputs and broadcast game state snapshots at a fixed frequency.
+  \item \textbf{Isolation}: This architecture isolates the time-sensitive game loop from the availability-oriented matchmaking tier.
+  \item \textbf{Resilience}: The Room Server provides limited fault tolerance by maintaining the session state in memory, saving it to disk periodically. 
+  This allows for graceful reconnection: if a client disconnects transiently, they can rejoin within a bounded time window and resume play, ensuring that minor network failures do not invalidate the entire match.
+  Also, if the Room Server itself fails, it can be restarted without affecting the overall system availability, as the Hub Server remains operational and can redirect new clients to other active rooms.
+  As a matter of fact, the system is designed to be resilient to partial failures, ensuring that the user experience remains uninterrupted even under adverse conditions.
 \end{itemize}
