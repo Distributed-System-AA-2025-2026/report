@@ -1,226 +1,330 @@
 \section{Design}\label{design}
 
 This chapter explains the strategies used to meet the requirements identified in the analysis.
-%
-Ideally, the design should be the same, regardless of the technological choices made during the implementation phase.
-\begin{quote}
-You can re-arrange the sections as you prefer, but all the sections must be present in the end
-\end{quote}
 
-\noindent
-\textbf{Important:} try to motivate your design choices in relation to the requirements and features identified 
-in \cref{requirements} and \cref{ds-features}.
 \subsection{Architecture}\label{architecture}
 
-\begin{itemize}
-  \item Which architectural style?
-  %
-  \begin{itemize}
-    \item why?
-  \end{itemize}
-\end{itemize}
+\subsubsection{Hub Server}
+
+The Hub Server adopts a \textbf{peer-to-peer overlay} architectural style, where each hub instance is both a client and a server within the gossip protocol.
+No hub acts as a coordinator or leader: every instance maintains its own local copy of the cluster state and makes autonomous decisions.
+
+This choice is motivated by the AP orientation identified in the requirements.
+A leader-based architecture (e.g., Raft, Paxos) would provide strong consistency but would sacrifice availability during leader elections or network partitions.
+Since the Hub's primary role is matchmaking (returning a joinable room to clients), temporary inconsistencies between hubs (e.g., two hubs briefly disagreeing on a room's player count) are tolerable and self-correcting via gossip convergence.
+
+The client-facing layer uses a standard \textbf{request-response} pattern over HTTP (via FastAPI), decoupled from the internal gossip communication.
+This separates the concerns of client interaction (synchronous, HTTP) from cluster coordination (asynchronous, UDP gossip).
+
+\subsubsection{Room Server}
+% TODO
 
 \subsection{Infrastructure}\label{infrastructure}
 
+\subsubsection{Hub Server}
+
+The infrastructure comprises the following components:
+
+\paragraph{Hub Instances.}
+Each hub runs as a Kubernetes \texttt{StatefulSet} pod.
+The StatefulSet guarantees stable hostnames (e.g., \texttt{hub-0...}, \texttt{hub-1...}), which are used to derive the hub index and to construct DNS-based \texttt{ServerReference}\footnote{A class that is used to encapsule Server ip and port.} addresses for gossip communication.
+Each hub pod exposes two network interfaces:
 \begin{itemize}
-  \item are there \emph{infrastructural components} that need to be introduced? \emph{how many}?
-  %
-  \begin{itemize}
-    \item e.g.~\emph{clients}, \emph{servers}, \emph{load balancers},
-    \emph{caches}, \emph{databases}, \emph{message brokers},
-    \emph{queues}, \emph{workers}, \emph{proxies}, \emph{firewalls},
-    \emph{CDNs}, \emph{etc.}
-  \end{itemize}
-
-  \item how do components \emph{distribute} over the network?
-  \emph{where}?
-  %
-  \begin{itemize}
-    \item e.g.~do servers / brokers / databases / etc. sit on the same
-    machine?
-    on the same network? on the same datacenter? on the same
-    continent?
-  \end{itemize}
-
-  \item how do components \emph{find} each other?
-  %
-  \begin{itemize}
-    \item how to \emph{name} components?
-    \item e.g.~DNS, \emph{service discovery}, \emph{load balancing},
-    \emph{etc.}
-  \end{itemize}
+  \item \textbf{HTTP API} (port 8000, via FastAPI/Uvicorn): serves client matchmaking requests, room lifecycle callbacks from Room Servers (\texttt{/room/\{id\}/start}, \texttt{/room/\{id\}/close}), health/readiness probes, and a debug endpoint.
+  \item \textbf{UDP gossip socket} (configurable via \texttt{GOSSIP\_PORT}\footnote{Port 9000 is used in this project}): used for peer-to-peer gossip protocol communication, bound to \texttt{0.0.0.0} to accept messages from any peer.
 \end{itemize}
 
-\begin{quote}
-Component diagrams are welcome here
-\end{quote}
+\paragraph{Room Instances.}
+Each Room Server runs as an independent Kubernetes pod, created and managed by the hub's \texttt{RoomManager}.
+Room pods are exposed via \texttt{NodePort} services, allowing external clients to connect directly to the game server.
+An internal \texttt{ClusterIP} service is also created for each room, used by the \texttt{RoomHealthMonitor} to perform HTTP health checks on port 8080.
+
+\paragraph{Service Discovery.}
+Components discover each other through two mechanisms depending on the deployment mode:
+\begin{itemize}
+  \item \textbf{Manual mode}: peers are addressed on \texttt{127.0.0.1} with port-based indexing (\texttt{9000 + peer\_index}). Suitable for local development and testing, please note that without this mode the project it's deployable in local without k8s.
+  \item \textbf{Kubernetes mode}: peers are addressed via DNS using the pattern \texttt{hub-\{index\}.hub-service.bomberman.svc.cluster.local}, resolved by the Kubernetes DNS service. The \texttt{HUB\_SERVICE\_NAME} and \texttt{K8S\_NAMESPACE} environment variables configure this resolution.
+\end{itemize}
+
+Room Servers are discovered by the hub via the Kubernetes API (\texttt{CoreV1Api}), which is also used to create, delete, and inspect room pods and services.
+
+\paragraph{Network Topology.}
+All components run within the same Kubernetes cluster (same network namespace).
+Hub-to-hub gossip uses UDP within the cluster network.
+Client-to-hub communication enters through an external ingress.
+Client-to-room communication uses NodePort services, exposing game traffic directly on cluster node ports.
+
+\subsubsection{Room Server}
+% TODO
 
 \subsection{Modelling}\label{modelling}
 
+\subsubsection{Hub Server}
+
+\paragraph{Domain Entities.}
+
 \begin{itemize}
-  \item which \textbf{domain entities} are there?
-  %
-  \begin{itemize}
-    \item e.g.~\emph{users}, \emph{products}, \emph{orders}, \emph{etc.}
-  \end{itemize}
-  
-  \item how do \emph{domain entities} \textbf{map to} \emph{infrastructural components}?
-  %
-  \begin{itemize}
-    \item e.g.~state of a video game on central server, while inputs/representations on clients
-    \item e.g.~where to store messages in an IM app?
-    for how long?
-  \end{itemize}
-
-  \item which \textbf{domain events} are there?
-  %
-  \begin{itemize}
-    \item e.g.~\emph{user registered}, \emph{product added to cart}, \emph{order placed}, \emph{etc.}
-  \end{itemize}
-  
-  \item which sorts of \textbf{messages} are exchanged?
-  %
-  \begin{itemize}
-    \item e.g.~\emph{commands}, \emph{events}, \emph{queries}, \emph{etc.}
-  \end{itemize}
-
-  \item what information does the \textbf{state} of the system comprehend
-  %
-  \begin{itemize}
-    \item e.g.~\emph{users' data}, \emph{products' data}, \emph{orders' data}, \emph{etc.}
-  \end{itemize}
+  \item \textbf{HubPeer}: represents a known hub instance in the cluster. Each peer has an \texttt{index} (derived from hostname), a \texttt{ServerReference} (address + port), a \texttt{status} (\texttt{alive}, \texttt{suspected}, \texttt{dead}), a monotonically increasing \texttt{heartbeat} counter (used for duplicate detection), and a \texttt{last\_seen} timestamp (used for failure detection).
+  \item \textbf{Room}: represents a game session. Each room has a \texttt{room\_id}, an \texttt{owner\_hub\_index} (the hub that created it), a \texttt{status} (following the lifecycle \texttt{DORMANT} $\rightarrow$ \texttt{ACTIVE} $\rightarrow$ \texttt{PLAYING} $\rightarrow$ \texttt{CLOSED/DORMANT}), a \texttt{player\_count} with a configurable \texttt{max\_players} cap, and network details (\texttt{external\_port}, \texttt{internal\_service}).
+  \item \textbf{HubState}: the aggregate root that holds the local view of the cluster. It contains a list of \texttt{HubPeer} instances (indexed by peer index, with \texttt{None} gaps for unknown indices) and a dictionary of \texttt{Room} instances (keyed by \texttt{room\_id}). All access is synchronized via a \texttt{threading.RLock}.
+  \item \textbf{ServerReference}: a value object representing a network endpoint (address + port).
+  \item \textbf{RoomStatus}: an enumeration defining the room lifecycle states: \texttt{DORMANT} (created but not accepting players), \texttt{ACTIVE} (waiting for players), \texttt{PLAYING} (game in progress), and \texttt{CLOSED} (ended, pending cleanup). This enum drives the joinability logic and state transition rules throughout the system.
+  \item \textbf{GossipMessage}: the protocol envelope for all inter-hub communication. Each message carries a \texttt{nonce} (monotonic per origin), \texttt{origin} and \texttt{forwarded\_by} indices, a \texttt{timestamp}, an \texttt{event\_type} discriminator, and exactly one \texttt{oneof payload} matching the event type. Defined as a Protocol Buffers message.
+  \item \textbf{Event Payloads}: a set of value objects, one per event type, carrying event-specific data. Examples include \texttt{RoomActivatedPayload} (room\_id, owner\_hub, external\_port, external\_address), \texttt{PeerJoinPayload} (joining\_peer index), and \texttt{RoomPlayerJoined} (room\_id). Each payload is a Protocol Buffers message nested within the \texttt{GossipMessage} envelope.
 \end{itemize}
 
-\begin{quote}
-Class diagram are welcome here
-\end{quote}
+\paragraph{Domain Events.}
+
+The gossip protocol defines two categories of events, encoded as \texttt{EventType} in the Protocol Buffers schema:
+
+\begin{itemize}
+  \item \textbf{Peer lifecycle events}: \texttt{PEER\_JOIN} (a hub announces itself), \texttt{PEER\_LEAVE} (graceful shutdown), \texttt{PEER\_ALIVE} (liveness declaration in response to suspicion), \texttt{PEER\_SUSPICIOUS} (a hub suspects another is unresponsive), \texttt{PEER\_DEAD} (a hub declares another dead after timeout).
+  \item \textbf{Room lifecycle events}: \texttt{ROOM\_ACTIVATED} (a room starts accepting players, includes owner hub, external port, and address), \texttt{ROOM\_PLAYER\_JOINED} (player count increment), \texttt{ROOM\_STARTED} (game begins, room no longer joinable), \texttt{ROOM\_CLOSED} (game ended, room returns to dormant).
+\end{itemize}
+
+\paragraph{Messages.}
+
+All gossip messages share a common envelope (\texttt{GossipMessage}) containing:
+\begin{itemize}
+  \item \texttt{nonce}: monotonically increasing counter per origin hub, used for duplicate detection and message ordering.
+  \item \texttt{origin}: the index of the hub that originally created the message.
+  \item \texttt{forwarded\_by}: the index of the hub that last forwarded the message (changes at each hop).
+  \item \texttt{timestamp}: message creation time.
+  \item \texttt{event\_type}: enum discriminator for the payload.
+  \item One of payload field carrying the event-specific data.
+\end{itemize}
+
+\paragraph{System State.}
+
+Each hub maintains:
+\begin{itemize}
+  \item A \textbf{peer list}: all known hub instances with their status, heartbeat counter, and last seen timestamp. This is the hub's local membership view.
+  \item A \textbf{room registry}: all known rooms (both local and remote) with their lifecycle status and player count. This is the hub's local view of available game sessions.
+  \item A \textbf{nonce counter}: the last used nonce for outgoing messages, ensuring monotonicity.
+\end{itemize}
+
+\subsubsection{Room Server}
+% TODO
 
 \subsection{Interaction}\label{interaction}
 
+\subsubsection{Hub Server}
+
+\paragraph{Client $\rightarrow$ Hub (HTTP).}
+The client sends a \texttt{POST /matchmaking} request.
+The hub consults its local \texttt{HubState} for a joinable room (status \texttt{ACTIVE}, \texttt{player\_count < max\_players}).
+If found, the hub increments the player count, broadcasts a \texttt{ROOM\_PLAYER\_JOINED} gossip message, and returns the room's address and port.
+If no joinable room exists, the hub asks its \texttt{RoomManager} to activate a dormant room (or create a new one in K8s mode); upon success, it broadcasts \texttt{ROOM\_ACTIVATED} and returns the new room's details.
+If activation fails, the hub returns HTTP 503.
+
+\paragraph{Room $\rightarrow$ Hub (HTTP callbacks).}
+The Room Server notifies the hub of lifecycle transitions:
 \begin{itemize}
-  \item how do components \emph{communicate}?
-  \emph{when}? \emph{what}?
-  \item \emph{which} \textbf{interaction patterns} do they enact?
+  \item \texttt{POST /room/\{id\}/start}: triggers a \texttt{ROOM\_STARTED} gossip broadcast and sets the room status to \texttt{PLAYING}.
+  \item \texttt{POST /room/\{id\}/close}: triggers a \texttt{ROOM\_CLOSED} gossip broadcast and sets the room status to \texttt{DORMANT}.
 \end{itemize}
 
-\begin{quote}
-Sequence diagrams are welcome here
-\end{quote}
+\paragraph{Hub $\leftrightarrow$ Hub (UDP Gossip).}
+When a hub receives a gossip message via \texttt{HubSocketHandler}, the following pipeline executes:
+\begin{enumerate}
+  \item \textbf{Resolve sender}: in K8s mode, the sender reference is recalculated from the \texttt{forwarded\_by} index (because UDP source addresses may differ from the pod's DNS name).
+  \item \textbf{Ensure peers exist}: the origin and forwarder are added to the peer list if not already known.
+  \item \textbf{Heartbeat check}: the message's nonce is compared against the stored heartbeat for the origin peer. If the nonce is not newer, the message is a duplicate and is discarded. The forwarder is marked as alive regardless.
+  \item \textbf{Process payload}: the event-specific handler is invoked (e.g., \texttt{\_handle\_room\_activated} adds a room to local state).
+  \item \textbf{Forward}: the message is forwarded to a random subset of alive peers (bounded by \texttt{HUB\_FANOUT}), with the \texttt{forwarded\_by} field updated to the current hub's index.
+\end{enumerate}
+
+\paragraph{Hub $\rightarrow$ Room (Health Check).}
+The \texttt{RoomHealthMonitor} periodically sends \texttt{GET /status} HTTP requests to each \texttt{ACTIVE} room's internal service.
+If the room does not respond with status \texttt{WAITING\_FOR\_PLAYERS}, the hub marks it as unhealthy: local rooms are transitioned to \texttt{PLAYING} (with a gossip broadcast), remote rooms are removed from local state.
+
+\subsubsection{Room Server}
+% TODO
 
 \subsection{Behaviour}\label{behaviour}
 
+\subsubsection{Hub Server}
+
+\paragraph{HubServer (Stateful, Coordinator).}
+The \texttt{HubServer} class is the central coordinator.
+On initialization, it creates and starts all subsystems (socket handler, failure detector, peer discovery monitor, room manager, room health monitor).
+It reacts to incoming gossip messages via callback dispatch (\texttt{\_on\_gossip\_message}), to failure detector callbacks (\texttt{\_on\_peer\_suspicious}, \texttt{\_on\_peer\_dead}), to peer discovery triggers (\texttt{\_discovery\_peers}), and to room health alerts (\texttt{\_on\_room\_unhealthy}).
+On shutdown (\texttt{stop()}), it broadcasts a \texttt{PEER\_LEAVE} message and cleanly stops all subsystems.
+
+\paragraph{HubState (Stateful, Passive).}
+\texttt{HubState} is a thread-safe container.
+It does not initiate any actions; it only responds to queries and mutations from the \texttt{HubServer} and background threads.
+All methods acquire the internal \texttt{RLock} before accessing shared data.
+Notable behavior: \texttt{execute\_heartbeat\_check} implements the duplicate detection logic. It returns \texttt{True} only if the received nonce is strictly greater than the stored one, or if a dead peer is returning (resurrection).
+A special case prevents propagation of \texttt{PEER\_LEAVE} messages for already-dead peers.
+
+\paragraph{FailureDetector (Stateful, Active).}
+Runs a background thread that periodically iterates over all known peers (excluding self).
+For each peer, it computes the silence duration (\texttt{now - last\_seen}).
+The state machine transitions are:
 \begin{itemize}
-  \item how does \emph{each} component \textbf{behave} individually (e.g.~in \emph{response} to \emph{events} or messages)?
-  \begin{itemize}
-    \item some components may be \emph{stateful}, others \emph{stateless}
-  \end{itemize}
-
-  \item which components are in charge of updating the \textbf{state} of the system?
-  \emph{when}? \emph{how}?
+  \item \texttt{alive} $\rightarrow{\text{silence} > \texttt{SUSPECT\_TIMEOUT}}$ \texttt{suspected} (triggers \texttt{on\_peer\_suspected} callback)
+  \item \texttt{alive} or \texttt{suspected} $\rightarrow{\text{silence} > \texttt{DEAD\_TIMEOUT}}$ \texttt{dead} (triggers \texttt{on\_peer\_dead} callback)
+  \item \texttt{dead} $\rightarrow$ no further transitions (peer is ignored)
 \end{itemize}
+Note: an alive peer can transition directly to dead if the silence exceeds \texttt{DEAD\_TIMEOUT} without an intermediate suspected check.
 
-\begin{quote}
-State diagrams are welcome here
-\end{quote}
+\paragraph{PeerDiscoveryMonitor (Stateful, Active).}
+Runs a background thread that periodically counts alive peers (excluding self).
+If the count is below the configured fanout, it triggers the \texttt{\_discovery\_peers} callback, which sends a \texttt{PEER\_JOIN} message to a randomly selected peer.
+This ensures the hub continuously attempts to maintain a sufficient peer count for effective gossip dissemination.
+
+\paragraph{RoomManager (Stateful, Passive).}
+Manages the local pool of room instances.
+In K8s mode, it creates pods and NodePort services via the Kubernetes API.
+When \texttt{activate\_room()} is called and no dormant room is available, the K8s implementation dynamically creates a new room (the local implementation cannot).
+On startup, K8s mode recovers existing room pods from a previous run (\texttt{\_recover\_existing\_rooms}).
+
+\paragraph{RoomHealthMonitor (Stateful, Active).}
+Runs a background thread that periodically checks all \texttt{ACTIVE} rooms via HTTP.
+It only checks rooms with a known \texttt{internal\_service} (skipping remote rooms without internal addressing).
+When a room fails the health check, the behavior depends on ownership: local rooms are transitioned to \texttt{PLAYING} (assuming the game has started), remote rooms are removed from state (assuming the remote hub will handle it).
+
+\paragraph{HubSocketHandler (Stateless, Active).}
+Manages the UDP socket.
+The listener thread spawns a new thread for each received datagram (to avoid blocking the receive loop during message processing).
+Message parsing (protobuf deserialization) and callback invocation happen in the handler thread.
+Send operations are fire-and-forget: errors (DNS resolution failure, socket errors) are logged but do not propagate.
+
+\subsubsection{Room Server}
+% TODO
 
 \subsection{Data and Consistency Issues}\label{data-and-consistency-issues}
 
+\subsubsection{Hub Server}
+
+\paragraph{Stored Data.}
+The Hub Server does not use persistent storage.
+All state is held in memory within the \texttt{HubState} object.
+If a hub crashes and restarts, it reconstructs its peer list through gossip (receiving \texttt{PEER\_JOIN}/\texttt{PEER\_ALIVE} messages from other hubs) and its room list through the K8s API (\texttt{\_recover\_existing\_rooms} queries existing pods).
+This design choice eliminates the need for a database and simplifies the deployment, at the cost of a brief inconsistency window during recovery.
+
+\paragraph{Shared Data.}
+The peer list and room registry are conceptually shared across all hubs, but each hub maintains its own copy.
+There is no shared database or distributed data structure.
+Consistency is achieved through gossip propagation: when a hub modifies its local state (e.g., activating a room), it broadcasts the change to the cluster.
+
+\paragraph{Consistency Model.}
+The system provides \textbf{eventual consistency}.
+After a state change originates at one hub, the gossip protocol propagates it to all alive hubs through fanout-bounded forwarding.
+The convergence time depends on the cluster size, fanout parameter, and gossip round interval.
+Duplicate messages are discarded via per-origin nonce tracking, ensuring idempotent processing.
+
+Possible temporary inconsistencies include:
 \begin{itemize}
-  \item Is there any data that needs to be stored?
-  %
-  \begin{itemize}
-    \item \emph{what} data? \emph{where}? \emph{why}?
-  \end{itemize}
-  
-  \item how should \emph{persistent data} be \textbf{stored}?
-  %
-  \begin{itemize}
-    \item e.g.~relations, documents, key-value, graph, etc.
-    \item why?
-  \end{itemize}
-  
-  \item Which components perform queries on the database?
-  %
-  \begin{itemize}
-    \item \emph{when}?
-    \emph{which} queries? \emph{why}?
-    \item concurrent read? concurrent write? why?
-  \end{itemize}
-  
-  \item Is there any data that needs to be shared between components?
-  %
-  \begin{itemize}
-    \item \emph{why}? \emph{what} data?
-  \end{itemize}
+  \item Two hubs simultaneously activating a room for the same matchmaking request (if the \texttt{ROOM\_ACTIVATED} message hasn't propagated yet). This results in two active rooms, which is acceptable since it simply increases capacity.
+  \item Player count divergence: if a \texttt{ROOM\_PLAYER\_JOINED} message is lost, some hubs may have a stale count. This is tolerable because the Room Server itself is the authoritative source for whether a game can start.
 \end{itemize}
+
+\paragraph{Concurrent Access.}
+All access to \texttt{HubState} is serialized via a \texttt{threading.RLock} (reentrant lock).
+This is necessary because multiple threads concurrently access the state: the HTTP request handler thread, the gossip message handler threads (one per received datagram), the failure detector thread, the peer discovery monitor thread, and the room health monitor thread.
+The reentrant property is used because some methods (e.g., \texttt{mark\_forward\_peer\_as\_alive}) call other locked methods internally (e.g., \texttt{add\_peer}).
+
+\subsubsection{Room Server}
+% TODO
 
 \subsection{Fault-Tolerance}\label{fault-tolerance}
 
+\subsubsection{Hub Server}
+
+\paragraph{Data Replication.}
+Each hub holds a full replica of the cluster state (peer list + room registry).
+Replication is achieved through the gossip protocol: every state-changing event is broadcast to the cluster.
+This is a form of \textbf{optimistic replication}, where each replica applies updates locally without coordinating with others, and conflicts are resolved by convergence (last-write-wins based on nonce ordering).
+
+\paragraph{Heartbeating and Failure Detection.}
+The \texttt{FailureDetector} implements a two-phase timeout-based scheme:
 \begin{itemize}
-  \item Is there any form of data \textbf{replication} / federation / sharing?
-  %
-  \begin{itemize}
-    \item \emph{why}? \emph{how} does it work?
-  \end{itemize}
-  
-  \item Is there any \textbf{heart-beating}, \textbf{timeout}, \textbf{retry mechanism}?
-  %
-  \begin{itemize}
-    \item \emph{why}?
-    \emph{among} which components? \emph{how} does it work?
-  \end{itemize}
-  
-  \item Is there any form of \textbf{error handling}?
-  %
-  \begin{itemize}
-    \item \emph{what} happens when a component fails? \emph{why}? \emph{how}?
-  \end{itemize}
+  \item \textbf{Suspect phase} (\texttt{SUSPECT\_TIMEOUT}, default 5 seconds): if a peer has not been heard from within this interval, it is marked as \texttt{suspected}. A \texttt{PEER\_SUSPICIOUS} message is broadcast, giving the suspected peer a chance to respond with a \texttt{PEER\_ALIVE} declaration.
+  \item \textbf{Dead phase} (\texttt{DEAD\_TIMEOUT}, default 20 seconds): if the silence continues, the peer is marked as \texttt{dead}. A \texttt{PEER\_DEAD} message is broadcast, and the peer is removed from the active peer list.
 \end{itemize}
+
+The two-phase design avoids premature removal: transient network delays or temporary processing stalls trigger suspicion (which is reversible) rather than immediate removal.
+The ``alive'' declaration mechanism allows a falsely suspected peer to rehabilitate itself.
+
+Gossip messages themselves serve as implicit heartbeats: any message received from a peer (regardless of type) updates the forwarder's \texttt{last\_seen} timestamp via \texttt{mark\_forward\_peer\_as\_alive}.
+
+\paragraph{Peer Recovery.}
+A dead peer can rejoin the cluster.
+In \texttt{execute\_heartbeat\_check}, if a message arrives from a peer currently marked as \texttt{dead}, the peer's status is reset to \texttt{alive} and the message is processed normally.
+This allows hubs that crashed and restarted to reintegrate without manual intervention.
+
+\paragraph{Room Recovery.}
+In Kubernetes mode, if a hub restarts, the \texttt{K8sRoomManager} queries the Kubernetes API for existing room pods labeled with the hub's index.
+Running or pending pods are recovered into the local room registry, avoiding orphaned rooms.
+
+\paragraph{Error Handling.}
+\begin{itemize}
+  \item \textbf{Network errors}: UDP send failures (DNS resolution, socket errors) are logged but do not crash the hub. The gossip protocol's redundant forwarding paths compensate for individual message losses.
+  \item \textbf{Malformed messages}: protobuf deserialization errors are caught in \texttt{HubSocketHandler.\_handle\_message} and logged, preventing invalid data from corrupting hub state.
+  \item \textbf{Room health failures}: rooms that fail HTTP health checks are handled gracefully (local rooms transitioned, remote rooms removed from state).
+  \item \textbf{Kubernetes API failures}: pod/service creation errors are caught and logged, allowing the hub to continue operating with a reduced room pool.
+\end{itemize}
+
+\subsubsection{Room Server}
+% TODO
 
 \subsection{Availability}\label{availability}
 
-\begin{itemize}
-  \item Is there any \textbf{caching} mechanism?
-  %
-  \begin{itemize}
-    \item \emph{where}? \emph{why}?
-  \end{itemize}
-  
-  \item Is there any form of \textbf{load balancing}?
-  %
-  \begin{itemize}
-    \item \emph{where}?
-    \emph{why}?
-  \end{itemize}
+\subsubsection{Hub Server}
 
-  \item In case of \textbf{network partitioning}, how does the system behave?
-  %
-  \begin{itemize}
-    \item \emph{why}? \emph{how}?
-  \end{itemize}
+\paragraph{No Caching.}
+The Hub Server does not implement caching.
+The local \texttt{HubState} already serves as an in-memory replica of the cluster state, making additional caching unnecessary.
+Every matchmaking request is served from the local state without external lookups.
+
+\paragraph{Load Distribution.}
+The system does not use a traditional load balancer between hubs.
+Instead, a Kubernetes Service distributes incoming HTTP requests across hub pods.
+Since each hub holds a full replica of the room registry, any hub can serve any matchmaking request independently, making the distribution stateless and trivially parallelizable.
+
+For gossip traffic, the fanout-bounded forwarding naturally distributes message propagation load: each hub forwards to at most \texttt{HUB\_FANOUT} peers, randomly selected, preventing any single hub from becoming a bottleneck.
+
+\paragraph{Network Partitioning.}
+Under a network partition, the system behaves as follows (consistent with its AP orientation):
+\begin{itemize}
+  \item Each partition continues to operate independently. Hubs in each partition serve matchmaking requests from their local state.
+  \item Hubs in different partitions will diverge: room activations and player joins on one side will not be visible on the other.
+  \item The failure detector will eventually mark unreachable peers as dead.
+  \item When the partition heals, hubs rediscover each other through the \texttt{PeerDiscoveryMonitor}. Dead peers that send new messages are automatically resurrected via the heartbeat check logic. Room state converges as new gossip events propagate.
+  \item The main consequence is that during the partition, the same room might be assigned to clients from both sides, or duplicate rooms might be activated. This is acceptable because the Room Server itself enforces the player cap, and excess rooms simply remain unused.
 \end{itemize}
+
+\subsubsection{Room Server}
+% TODO
 
 \subsection{Security}\label{security}
 
+\subsubsection{Hub Server}
+
+The Hub Server currently operates under a \textbf{trusted environment assumption}: all components run within a private Kubernetes cluster, and no external actors have direct access to the gossip protocol or the hub's HTTP management endpoints.
+
+\paragraph{Authentication and Authorization.}
+No authentication is implemented on any endpoint.
+The matchmaking endpoint, room lifecycle callbacks, and debug endpoint are all unauthenticated.
+In a production deployment, the following measures could be added:
 \begin{itemize}
-  \item Is there any form of \textbf{authentication}?
-  %
-  \begin{itemize}
-    \item \emph{where}? \emph{why}?
-  \end{itemize}
-
-  \item Is there any form of \textbf{authorization}?
-  %
-  \begin{itemize}
-    \item which sort of \emph{access control}?
-    \item which sorts of users / \emph{roles}?
-    which \emph{access rights}?
-  \end{itemize}
-
-  \item Are \textbf{cryptographic schemas} being used?
-  %
-  \begin{itemize}
-    \item e.g.~token verification,
-    \item e.g.~data encryption, etc.
-  \end{itemize}
+  \item API key or token-based authentication for room-to-hub callbacks (\texttt{/room/\{id\}/start}, \texttt{/room/\{id\}/close}).
+  \item Network-level access control via Kubernetes \texttt{NetworkPolicy} to restrict gossip traffic to hub pods only.
+  \item Disabling or restricting access to the \texttt{/debug/} endpoint, which exposes internal cluster state.
 \end{itemize}
+
+\paragraph{Gossip Security.}
+Gossip messages are neither authenticated nor encrypted.
+A malicious actor with access to the cluster network could inject forged gossip messages (e.g., false \texttt{PEER\_DEAD} declarations to destabilize the cluster).
+However, since the system assumes an internal Kubernetes network, this risk is accepted.
+Input validation is performed: malformed protobuf messages are discarded by the socket handler, and invalid peer indices or room IDs do not corrupt the hub state.
+
+\paragraph{Cryptography.}
+No cryptographic mechanisms are used.
+All communication (HTTP and UDP) is unencrypted.
+In a production deployment, TLS termination at the ingress level would protect client-to-hub communication, while mutual TLS (mTLS) via a service mesh could secure intra-cluster traffic.
+
+\subsubsection{Room Server}
+% TODO
