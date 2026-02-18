@@ -1,5 +1,140 @@
 \section{Requirements Elicitation and Analysis}\label{requirements}
 
+\subsection{Hub Server}
+This section outlines the specific requirements for the \textit{Hub Server} component and the underlying distributed architecture.
+This component is responsible for managing the cluster of hubs, coordinating peer discovery, synchronizing room state across instances, and serving as the entry point for client matchmaking.
+
+\subsubsection{Functional Requirements}
+\begin{enumerate}
+    \item \textbf{Peer Discovery and Membership}
+    \begin{itemize}
+        \item The system must support two discovery modes: \textit{manual} (statically configured peers - used for development) and \textit{Kubernetes-based}.
+        \item Each hub must maintain a local membership list of known peers, tracking their status (alive, suspected, dead).
+        \item \textit{Acceptance Criterion:} When a new hub instance starts and sends a \texttt{PEER\_JOIN} message, all reachable hubs add it to their local peer list within a bounded number of gossip rounds.
+    \end{itemize}
+
+    \item \textbf{Gossip-Based State Synchronization}
+    \begin{itemize}
+        \item Hubs must propagate cluster events (peer lifecycle changes, room state transitions) using a gossip protocol over UDP, with Proto Buf as the serialization format.
+        \item Message forwarding must use a fanout-bounded strategy: each hub forwards a received message to at most \texttt{HUB\_FANOUT}\footnote{\texttt{HUB\_FANOUT} = 4 by default} peers, preventing message storms while ensuring dissemination.
+        \item Duplicate messages must be detected and discarded using a per-peer nonce tracking mechanism.
+        \item \textit{Acceptance Criterion:} A \texttt{ROOM\_ACTIVATED} event originating from one hub is received by all alive hubs in the cluster.
+    \end{itemize}
+
+    \item \textbf{Failure Detection}
+    \begin{itemize}
+        \item Each hub must run a periodic failure detector that monitors peer liveness based on heartbeat timestamps.
+        \item A peer that has not sent any message within \texttt{SUSPECT\_TIMEOUT} seconds must be marked as \textit{suspected}. A peer silent for more than \texttt{DEAD\_TIMEOUT} seconds must be marked as \textit{dead} and removed from the active peer list.
+        \item \textit{Acceptance Criterion:} If a hub process is killed, the remaining hubs detect the failure and mark the peer as dead within \texttt{DEAD\_TIMEOUT} seconds. Suspected and dead transitions are broadcast to the cluster.
+    \end{itemize}
+
+    \item \textbf{Room Lifecycle Management - Hub POV}
+    \begin{itemize}
+        \item The Hub must manage the full room lifecycle: activation (\texttt{ROOM\_ACTIVATED}), game start (\texttt{ROOM\_STARTED}), and closure (\texttt{ROOM\_CLOSED}).
+        \item When a client requests matchmaking, the hub must return a joinable room from its local state. If none exists, it must activate a new room instance.
+        \item \textit{Acceptance Criterion:} A client calling the matchmaking endpoint always receives either an existing joinable room or a newly activated one, and the corresponding event is propagated to all hubs.
+    \end{itemize}
+
+    \item \textbf{Client Matchmaking Endpoint}
+    \begin{itemize}
+        \item The Hub must expose an HTTP endpoint that clients use to obtain room connection details (address, port).
+        \item \textit{Acceptance Criterion:} The endpoint returns a valid room reference with connection parameters. If no room is available and activation fails, the endpoint returns an appropriate error response.
+    \end{itemize}
+\end{enumerate}
+
+\subsubsection{Non-Functional Requirements}
+\begin{enumerate}
+    \item \textbf{Availability (AP Orientation)}
+    \begin{itemize}
+        \item The system must remain available to clients even when some hub instances are unreachable. Each hub operates on its local state and does not require consensus to serve matchmaking requests.
+        \item \textit{Acceptance Criterion:} If one or more hubs in the cluster crash, the remaining hubs continue to accept client requests and manage rooms without interruption.
+    \end{itemize}
+
+    \item \textbf{Eventual Consistency}
+    \begin{itemize}
+        \item The local state of each hub (peer list, room registry) must converge to a consistent view, given that gossip messages are eventually delivered.
+        \item \textit{Acceptance Criterion:} After a room activation event, all alive hubs reflect the new room in their local state within a bounded number of gossip rounds (dependent on cluster size and fanout), if an hub does not see a message of room activation in a finite time that room will be deactivated, so the state matches with other peers. Additionally, other lost information will be discovered by peer automatically.
+    \end{itemize}
+
+    \item \textbf{Scalability}
+    \begin{itemize}
+        \item The gossip protocol must scale with the number of hubs. The fanout-bounded forwarding ensures that per-node network load grows logarithmically rather than linearly with cluster size.
+        \item \textit{Acceptance Criterion:} Increasing the number of hubs from 3 to 10 does not cause message storms or significant increase in per-hub message processing load.
+    \end{itemize}
+
+    \item \textbf{Resilience to Message Loss}
+    \begin{itemize}
+        \item Since the gossip protocol operates over UDP, occasional message loss is expected. The system must tolerate lost messages through redundant forwarding paths inherent to the gossip protocol.
+        \item \textit{Acceptance Criterion:} The system continues to function correctly even if individual gossip packets are dropped, as redundant paths ensure eventual delivery.
+    \end{itemize}
+\end{enumerate}
+
+\subsubsection{Implementation Constraints}
+\begin{itemize}
+
+    \item \textbf{Serialization Format}
+    \begin{itemize}
+        \item All gossip messages are serialized using \textbf{Protocol Buffers} (protobuf).
+        \item \textit{Justification:} Protobuf provides compact binary encoding (critical for UDP datagrams with size constraints), strong typing via \texttt{.proto} schema definitions, and cross-language compatibility for future extensibility.
+    \end{itemize}
+
+    \item \textbf{Deployment}
+    \begin{itemize}
+        \item The Hub Server is designed to run as a \textbf{Kubernetes StatefulSet}, where each pod has a stable hostname (e.g., \texttt{hub-0}, \texttt{hub-1}, etc) used to derive the hub index.
+        \item \textit{Justification:} StatefulSets provide stable network identities, which simplifies peer addressing and index assignment in the gossip protocol.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{Relevant Distributed System Features}
+\label{ds-features-hub-server}
+
+The \textit{Hub Server} distributed architecture features are critical to the design and implementation of the cluster coordination layer.
+
+\begin{itemize}
+    \item \textbf{Transparency}
+    \begin{itemize}
+        \item Clients interact with a single HTTP matchmaking endpoint and are unaware that multiple Hub instances exist behind it. The distributed coordination (gossip, peer discovery, failure detection) is entirely hidden from the client perspective.
+        \item Location transparency is achieved through Kubernetes Services: clients connect to a single service address, and the underlying infrastructure routes requests to an available hub.
+    \end{itemize}
+
+    \item \textbf{Fault Tolerance}
+    \begin{itemize}
+        \item The failure detection mechanism uses a two-phase approach: peers are first marked as \textit{suspected} (allowing for transient network issues), then as \textit{dead} only after a longer timeout. This avoids premature removal of peers experiencing temporary connectivity problems.
+        \item When a hub is detected as dead, it is removed from the local peer list. Since each hub operates autonomously with its local state, the failure of one hub does not block the operation of others.
+        \item A hub that was previously marked as dead can rejoin the cluster by sending a new \texttt{PEER\_JOIN} message, enabling recovery without manual intervention.
+    \end{itemize}
+
+    \item \textbf{Scalability}
+    \begin{itemize}
+        \item The fanout-bounded gossip ensures that adding more hubs to the cluster does not result in quadratic message growth. Each hub forwards messages to a fixed maximum number of peers, achieving epidemic-style dissemination with bounded per-node cost.
+        \item Peer discovery in Kubernetes mode uses the Kubernetes API to dynamically resolve the set of hub endpoints, allowing the cluster to scale without reconfiguration.
+    \end{itemize}
+
+    \item \textbf{Resource Sharing}
+    \begin{itemize}
+        \item The primary shared resource is the \textbf{cluster state}: the set of known peers and the registry of active rooms with their player counts.
+        \item Each hub maintains its own copy of this state. Consistency is achieved through the gossip protocol rather than through shared memory or distributed locks, aligning with the AP design choice.
+    \end{itemize}
+
+    \item \textbf{Openness and Interoperability}
+    \begin{itemize}
+        \item The gossip protocol is defined through a Protocol Buffers schema (\texttt{.proto} file), making it language-agnostic. A hub implementation in a different language could participate in the cluster as long as it adheres to the same message format and protocol semantics.
+        \item The client-facing matchmaking endpoint uses standard HTTP, allowing any client implementation to interact with the hub.
+    \end{itemize}
+
+    \item \textbf{Evolvability and Maintainability}
+    \begin{itemize}
+        \item The architecture separates concerns across distinct components: \texttt{HubState} (data management), \texttt{HubSocketHandler} (network I/O), \texttt{FailureDetector} (liveness monitoring), \texttt{RoomManager} (room lifecycle orchestration), and \texttt{HubServer} (coordination logic). This modular design allows individual components to be modified or replaced independently.
+        \item Comprehensive unit test coverage with business-logic-focused testing ensures that refactoring or extending the system does not introduce regressions.
+    \end{itemize}
+
+    \item \textbf{Performance and Concurrency}
+    \begin{itemize}
+        \item The gossip protocol uses UDP datagrams with Protocol Buffers serialization, minimizing per-message overhead and avoiding TCP connection establishment costs.
+        \item The failure detector and peer discovery monitor run as independent background threads, decoupled from the main message processing loop, ensuring that periodic housekeeping tasks do not block client-facing operations.
+    \end{itemize}
+\end{itemize}
+
 \subsection{Room Server}
 This section outlines the specific requirements for the \textit{Room Server} component and the underlying distributed architecture.
 This component is responsible for maintaining the authoritative game state, processing player inputs, and broadcasting updates to clients.
