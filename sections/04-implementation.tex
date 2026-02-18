@@ -1,47 +1,89 @@
 \section{Implementation}\label{implementation}
 
-Please report here all the implementation (technology-dependent) choices you made while implementing your design.
-\begin{quote}
-  If you run out of time for this project, you may consider leaving some aspect unimplemented, 
-  and simply discuss how you would have implemented them.
-  %
-  In this case, better would be to discuss unimplemented features in \cref{future-works}.
-\end{quote}
+This section documents the technology-dependent choices made while implementing the design described in \cref{design}.
+
+\subsection{Hub Server}\label{implementation-hub}
+
+\subsubsection{Network Protocols}
+
+The Hub Server uses two distinct network protocols, chosen to match the communication semantics of each interaction:
 
 \begin{itemize}
-  \item which \textbf{network protocols} to use?
-  %
-  \begin{itemize}
-    \item e.g.~UDP, TCP, HTTP, WebSockets, gRPC, XMPP, AMQP, MQTT, etc.
-  \end{itemize}
-  
-  \item how should \emph{in-transit data} be \textbf{represented}?
-  %
-  \begin{itemize}
-    \item e.g.~JSON, XML, YAML, Protocol Buffers, etc.
-  \end{itemize}
-  
-  \item how should \emph{databases} be \textbf{queried}?
-  %
-  \begin{itemize}
-    \item e.g.~SQL, NoSQL, etc.
-  \end{itemize}
-  
-  \item how should components be \emph{authenticated}?
-  %
-  \begin{itemize}
-    \item e.g.~OAuth, JWT, etc.
-  \end{itemize}
+  \item \textbf{UDP} for inter-hub gossip communication. UDP is chosen because gossip messages are small (single protobuf-encoded datagrams), stateless, and tolerant to occasional loss. The gossip protocol's redundant forwarding inherently compensates for dropped packets, making TCP's reliability guarantees unnecessary overhead. The socket is bound to \texttt{0.0.0.0} on the configured \texttt{GOSSIP\_PORT}, and each received datagram is handled in a dedicated thread to avoid blocking the receive loop.
 
-  \item how should components be \emph{authorized}?
-  %
-  \begin{itemize}
-    \item e.g.~RBAC, ABAC, etc.
-  \end{itemize}
+  \item \textbf{HTTP} for client-facing and room-facing APIs. HTTP is used because these interactions follow a request-response pattern where the caller needs a confirmation (e.g., the client needs room connection details, the Room Server needs acknowledgment of lifecycle events). The HTTP layer is served by \textbf{Uvicorn} (ASGI server) with \textbf{FastAPI} as the framework.
 \end{itemize}
 
-\subsection{Technological details}\label{technological-details}
+\subsubsection{Data Representation}
 
 \begin{itemize}
-  \item any particular \emph{framework} / \emph{technology} being exploited goes here
+  \item \textbf{Protocol Buffers} (protobuf) for all gossip messages. The schema is defined in \texttt{messages.proto} and compiled to Python via \texttt{protoc}. Protobuf is chosen over JSON for three reasons: (1) compact binary encoding reduces UDP datagram size, (2) the \texttt{.proto} schema provides a strict contract between hub implementations, and (3) the \texttt{oneof} construct naturally models the event payload discriminated union.
+
+  \item \textbf{JSON} for all HTTP endpoints, handled natively by FastAPI's \texttt{response\_model} serialization via Pydantic. The matchmaking response (\texttt{MatchmakingResponse}) includes \texttt{room\_address}, \texttt{room\_port}, and \texttt{room\_id}.
 \end{itemize}
+
+\subsubsection{Database}
+
+The Hub Server does not use any database. All state is held in-memory in the \texttt{HubState} object. On restart, room state is recovered from the Kubernetes API (querying existing pods), and peer state is reconstructed through gossip protocol convergence. This choice eliminates an external dependency and is consistent with the ephemeral nature of the hub's coordination role.
+A possible implementation should be implement a mechanism that insert when a room is activated (in this case the activator should make an INSERT over the database - if a relational one is chosen) or when a room is closed, in this case when a room is closed. But in every case if the Database is unreachable a best effort approach should be tollered or another system should be implemented.
+
+\subsubsection{Authentication and Authorization}
+
+No authentication or authorization is implemented. All endpoints (matchmaking, room callbacks, debug) are unauthenticated. The system relies on Kubernetes network-level isolation: only pods within the cluster can reach the gossip port and the internal HTTP API. This is documented as a known limitation in \cref{security}.
+
+\subsubsection{Technological Details}\label{tech-details-hub}
+
+\paragraph{Python.}
+The entire Hub Server is implemented in Python 3.11+. Python's \texttt{threading} module is used for concurrent background tasks (failure detection, peer discovery, room health monitoring, gossip message handling). The GIL limits true parallelism, but since all background tasks are I/O-bound (socket operations, HTTP requests, \texttt{time.sleep}), this is not a bottleneck.
+
+\paragraph{FastAPI + Uvicorn.}
+The HTTP API is built with FastAPI, chosen for its automatic request validation, OpenAPI documentation generation, and native async support. Uvicorn serves as the ASGI server. The \texttt{lifespan} context manager handles the \texttt{HubServer} instance lifecycle (creation on startup, graceful shutdown with \texttt{PEER\_LEAVE} broadcast on termination).
+
+Exposed endpoints:
+\begin{itemize}
+  \item \texttt{POST /matchmaking}: client entry point, returns room connection details.
+  \item \texttt{POST /room/\{id\}/start} and \texttt{POST /room/\{id\}/close}: room lifecycle callbacks.
+  \item \texttt{GET /health} and \texttt{GET /ready}: Kubernetes liveness and readiness probes.
+  \item \texttt{GET /debug/}: internal state inspection (peers, rooms, configuration).
+\end{itemize}
+
+\paragraph{Protocol Buffers.}
+The gossip schema (\texttt{messages.proto}) defines the \texttt{GossipMessage} envelope, the \texttt{EventType} enum (9 event types across peer and room lifecycles), and the corresponding payload messages. The compiled \texttt{messages\_pb2.py} module is used for serialization (\texttt{SerializeToString}) and deserialization (\texttt{ParseFromString}) in the socket handler.
+
+\paragraph{Kubernetes Client.}
+The \texttt{kubernetes} Python library (official client) is used by the \texttt{K8sRoomManager} to interact with the Kubernetes API. It uses \texttt{load\_incluster\_config()} when running inside a pod, with a fallback to \texttt{load\_kube\_config()} for local development. Operations include creating/deleting pods and services, listing pods by label selector, and reading service details (for NodePort extraction).
+
+\paragraph{Threading Model.}
+The Hub Server runs multiple concurrent threads:
+\begin{itemize}
+  \item \textbf{Main thread}: runs the Uvicorn/FastAPI event loop, handling HTTP requests.
+  \item \textbf{Listener thread}: runs the UDP receive loop in \texttt{HubSocketHandler}, spawning a new daemon thread per received datagram.
+  \item \textbf{FailureDetector thread}: periodic peer liveness checks (configurable interval, default 1 second).
+  \item \textbf{PeerDiscoveryMonitor thread}: periodic peer count checks (configurable interval, default 60 seconds).
+  \item \textbf{RoomHealthMonitor thread}: periodic room HTTP health checks (every 15 seconds).
+\end{itemize}
+
+All threads access shared state through the \texttt{HubState}'s \texttt{RLock}. All background threads are started as daemon threads, ensuring they terminate automatically when the main process exits.
+
+\paragraph{Configuration.}
+The Hub Server is configured entirely through environment variables, enabling Kubernetes-native configuration via \texttt{ConfigMap} and \texttt{StatefulSet} environment injection:
+
+\begin{center}
+  \begin{tabular}{l l l}
+    \textbf{Variable} & \textbf{Purpose} & \textbf{Default} \\
+    \hline
+    \texttt{HOSTNAME} & Pod hostname, used for index derivation & \texttt{hub-0.local} \\
+    \texttt{GOSSIP\_PORT} & UDP port for gossip & (required) \\
+    \texttt{HUB\_FANOUT} & Max peers per forward & \texttt{4} \\
+    \texttt{HUB\_SERVICE\_NAME} & K8s headless service name & \texttt{hub-service} \\
+    \texttt{K8S\_NAMESPACE} & Kubernetes namespace & \texttt{bomberman} \\
+    \texttt{EXPECTED\_HUB\_COUNT} & Expected cluster size for discovery & \texttt{hub\_index + 1} \\
+    \texttt{HUB\_DISCOVERY\_MODE} & Discovery mode (\texttt{manual}/\texttt{k8s}) & \texttt{manual} \\
+    \texttt{HTTP\_PORT} & HTTP API port & \texttt{8000} \\
+    \texttt{FAILURE\_DETECTOR\_SUSPECT\_TIMEOUT} & Seconds before suspecting a peer & \texttt{5} \\
+    \texttt{FAILURE\_DETECTOR\_DEAD\_TIMEOUT} & Seconds before declaring dead & \texttt{20} \\
+  \end{tabular}
+\end{center}
+
+\subsection{Room Server}\label{implementation-room}
+% TODO
