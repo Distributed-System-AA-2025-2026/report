@@ -43,13 +43,22 @@ The necessity for distribution is justified by the following factors:
 \end{itemize}
 
 \subsubsection{Hub Server}
-The \textbf{Hub Server} acts as the entry point for the distributed system. 
-Its primary responsibility is \textbf{Availability}, by a CAP theorem perspective it is \textbf{AP-oriented}. 
-It handles client connection requests, manages the "Lobby" state, and orchestrates the creation of new game instances.
+The \textbf{Hub Server} acts as the entry point for the distributed system.
+From a CAP theorem perspective, it is \textbf{AP-oriented}: its primary goal is to guarantee \textbf{Availability} and \textbf{Partition Tolerance}, accepting eventual consistency across hub instances.
 
-The Hub Server serves as a load balancer and service discovery mechanism.
-When a match is formed, the Hub spawns a new \textit{Room Server} (or allocates an existing one) and redirects the participating clients to that specific instance. 
-This component is designed to be lightweight and highly responsive, ensuring that users can always connect to the platform, even if specific game rooms are currently experiencing high load.
+Multiple Hub Server instances form a peer-to-peer overlay network, where each hub maintains a local view of the cluster state (known peers, active rooms, player counts).
+Hubs synchronize this state through a \textbf{gossip protocol} over UDP, using Proto Buf for message serialization.
+The gossip layer handles two categories of events:
+\begin{itemize}
+    \item \textbf{Peer lifecycle}: join, leave, alive, suspicious, and dead notifications, enabling distributed peer discovery and failure detection without a central coordinator.
+    \item \textbf{Room lifecycle}: room activation, player joins, game start, and room closure, ensuring all hubs share a consistent (eventually) view of available game sessions.
+\end{itemize}
+
+Messages are propagated using a \textbf{fanout-based forwarding} strategy: each hub forwards received gossip messages to a bounded subset of its known peers.
+
+When a client requests to join a game, the Hub Server consults its local state to find a joinable room and returns the corresponding connection details.
+If no room is available, the hub triggers the activation of a new room instance and communicates to other peers that.
+This design ensures that clients always receive a response, even if some hubs in the cluster are temporarily unreachable — the defining property of an AP system.
 
 \subsubsection{Room Server}
 The \textbf{Room Server} is the core execution unit responsible for managing the game state and facilitating synchronized communication between clients. 
