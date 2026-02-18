@@ -17,7 +17,14 @@ The client-facing layer uses a standard \textbf{request-response} pattern over H
 This separates the concerns of client interaction (synchronous, HTTP) from cluster coordination (asynchronous, UDP gossip).
 
 \subsubsection{Room Server}
-% TODO
+
+The Room Server adopts a \textbf{Client-Server (Authoritative Server)} architectural style. 
+The Room Server acts as the centralized authority for a specific game match. 
+Clients do not communicate with each other directly; instead, they send their intentions (inputs) to the Room Server, which computes the true state of the world and broadcasts it back.
+
+This choice is strictly motivated by the \textbf{CP-orientation} required for game logic. 
+In a fast-paced game like Bomberman, concurrent actions (e.g., two players attempting to place a bomb in the same spot simultaneously) must be resolved deterministically.
+An authoritative server ensures a single source of truth, preventing desynchronization and mitigating client-side cheating.
 
 \subsection{Infrastructure}\label{infrastructure}
 
@@ -55,7 +62,25 @@ Client-to-hub communication enters through an external ingress.
 Client-to-room communication uses NodePort services, exposing game traffic directly on cluster node ports.
 
 \subsubsection{Room Server}
-% TODO
+
+The infrastructure for the Room tier consists of dynamically provisioned compute units:
+
+\paragraph{Room Instances.}
+Each Room Server is a self-contained process. In the Kubernetes deployment mode, it runs as an independent \texttt{Pod} spawned dynamically by the Hub Server's \texttt{RoomManager}. 
+Each Room Pod is isolated, meaning the computational load of one match does not impact others.
+
+\paragraph{Network Interfaces.}
+Each Room Server exposes two distinct network interfaces:
+\begin{itemize}
+  \item \textbf{Game Port (TCP):} A socket bound to an IP address, exposed externally via a Kubernetes \texttt{NodePort} Service. 
+  This allows external game clients to bypass the Hub tier and establish persistent, TCP connections directly to the node hosting the Room Server.
+  \item \textbf{Management API (HTTP):} An internal HTTP server exposed via a \texttt{ClusterIP} service. 
+  This is used exclusively by the Hub Server for lifecycle management and health monitoring (\texttt{GET /status}).
+\end{itemize}
+
+\paragraph{Discovery.}
+Clients discover the Room Server via the Hub: the matchmaking response provides the exact external IP and \texttt{NodePort} to connect to. 
+The Hub discovers the Room Server's internal IP via the Kubernetes API upon Pod creation.
 
 \subsection{Modelling}\label{modelling}
 
@@ -104,7 +129,26 @@ Each hub maintains:
 \end{itemize}
 
 \subsubsection{Room Server}
-% TODO
+
+\paragraph{Domain Entities.}
+\begin{itemize}
+  \item \textbf{Game Engine}: The aggregate root representing the entire match state. 
+  It contains the grid, the list of players, active bombs, and power-ups.
+  \item \textbf{Player}: Represents an in-game player, tracking coordinates player's ID, position, alive/dead status, and if they are the owner of a bomb.
+  \item \textbf{Bomb}: Represents a bomb placed on the grid, tracking its position, owner, explosion timer, and blast range.
+\end{itemize}
+
+\paragraph{Entity Mapping.}
+The authoritative \texttt{Game Engine} resides exclusively in the Room Server's memory. 
+Clients only hold a string-based representation of this model. 
+When a domain event occurs (e.g., a bomb explodes), the Room Server calculates the outcome (destroyed walls, killed players) and broadcasts a new snapshot to all clients.
+
+\paragraph{Domain Events and Messages.}
+Communication between Client and Room Server relies on compact Protocol Buffers exchanged over a TCP stream.
+\begin{itemize}
+  \item \textbf{Commands (Client $\rightarrow$ Server)}: Represent player intentions (actions).
+  \item \textbf{State Updates (Server $\rightarrow$ Client)}: The server periodically broadcasts a snapshot message, ensuring clients continually synchronize with the authoritative state.
+\end{itemize}
 
 \subsection{Interaction}\label{interaction}
 
@@ -139,7 +183,18 @@ The \texttt{RoomHealthMonitor} periodically sends \texttt{GET /status} HTTP requ
 If the room does not respond with status \texttt{WAITING\_FOR\_PLAYERS}, the hub marks it as unhealthy: local rooms are transitioned to \texttt{PLAYING} (with a gossip broadcast), remote rooms are removed from local state.
 
 \subsubsection{Room Server}
-% TODO
+
+\paragraph{Client $\leftrightarrow$ Room (TCP Stream).}
+Once a client connects to the Room Server, the interaction follows an \textbf{Asynchronous Input / Synchronous Broadcast} pattern:
+\begin{enumerate}
+  \item \textbf{Input Collection}: Clients send actions messages at varying frequencies based on user input. 
+  The Room Server asynchronously receives these and places them into a thread-safe input queue.
+  \item \textbf{Tick-Based Broadcast}: The Room Server does not respond to inputs immediately.
+  Instead, at a fixed frequency (e.g., 10 Hz), a dedicated game loop thread processes all queued inputs, updates the game state, and broadcasts the resulting snapshot to all connected clients simultaneously.
+\end{enumerate}
+
+\paragraph{Room $\rightarrow$ Hub (HTTP).}
+The Room Server uses a \textbf{Webhook} pattern to notify the Hub of major lifecycle shifts, sending HTTP \texttt{POST} requests to the Hub when the required number of players has connected (\texttt{/start}) and when the match ends (\texttt{/close}).
 
 \subsection{Behaviour}\label{behaviour}
 
@@ -192,7 +247,15 @@ Message parsing (protobuf deserialization) and callback invocation happen in the
 Send operations are fire-and-forget: errors (DNS resolution failure, socket errors) are logged but do not propagate.
 
 \subsubsection{Room Server}
-% TODO
+
+\paragraph{GameLoop (Stateful, Active).}
+The core behavior of the Room Server is driven by a single, stateful \texttt{GameLoop} thread. 
+This thread dictates the passage of time in the game. It is responsible for popping inputs from the network queues, updating the \texttt{Game Engine} (e.g., decrementing bomb timers, moving players), and broadcasting the new state. It strictly enforces a \texttt{sleep} interval at the end of each cycle to maintain a consistent tick rate.
+
+\paragraph{ClientHandler (Stateful, Passive).}
+For every connected client, the Room Server spawns a \texttt{ClientHandler} thread. 
+Its sole behavior is to block on the TCP socket, deserialize incoming Protocol Buffer messages, and append them to the main \texttt{GameLoop}'s input queue. 
+It does not update the game state directly, preventing concurrency anomalies.
 
 \subsection{Data and Consistency Issues}\label{data-and-consistency-issues}
 
@@ -227,7 +290,21 @@ This is necessary because multiple threads concurrently access the state: the HT
 The reentrant property is used because some methods (e.g., \texttt{mark\_forward\_peer\_as\_alive}) call other locked methods internally (e.g., \texttt{add\_peer}).
 
 \subsubsection{Room Server}
-% TODO
+
+\paragraph{Stored Data.}
+The Room Server persists the game state to disk. 
+The \texttt{Game Engine} class, which encapsulates the entire match state, is periodically serialized and saved as a Python pickle file (\texttt{.pkl}). 
+While active gameplay reads and writes to RAM for low-latency performance, dumping the state to a \texttt{.pkl} file provides a persistent snapshot of the game. 
+This file-based storage acts as a localized persistence mechanism, allowing the server to maintain a recoverable state of the match.
+
+\paragraph{Concurrent Access and Consistency.}
+The Room Server enforces \textbf{Strong Consistency}. 
+Since multiple \texttt{ClientHandler} threads receive data concurrently, all shared access to the game state is serialized. 
+Instead of relying on fine-grained locks which could cause deadlocks, the architecture uses a \textbf{Single-Writer principle}: the \texttt{GameLoop} thread is the \textit{only} entity allowed to mutate the \texttt{Game Engine} and to safely execute the disk I/O operations to save the \texttt{.pkl} file. 
+Concurrent writes (client inputs) are marshaled via thread-safe queues, ensuring the state is never pickled while partially modified.
+
+\paragraph{Shared Data.}
+The authoritative server model ensures that conflicting requests are resolved based on the order they are pulled from the queue during the tick.
 
 \subsection{Fault-Tolerance}\label{fault-tolerance}
 
@@ -268,7 +345,25 @@ Running or pending pods are recovered into the local room registry, avoiding orp
 \end{itemize}
 
 \subsubsection{Room Server}
-% TODO
+
+\paragraph{Local Checkpointing.}
+At the Room tier, there is no active state replication across multiple nodes. 
+A match is entirely isolated to a single Pod. However, to mitigate complete data loss, the Room Server implements \textbf{local checkpointing}. 
+By periodically serializing and dumping the \texttt{Game Engine} state to a \texttt{.pkl} file, the system creates a persistent snapshot of the match without the overhead of network replication.
+
+\paragraph{Error Handling and Disconnections.}
+\begin{itemize}
+  \item \textbf{Server Failure \& Recovery}: If a Room Server process crashes unexpectedly, the match state is not permanently lost. Upon restart, the server can deserialize the latest \texttt{.pkl} snapshot to restore the \texttt{Game Engine}. 
+  This allows the match to resume from the last saved checkpoint, losing only the transient inputs that occurred after the last disk write. 
+  The checkpoint is considered a best-effort recovery mechanism, as it does not guarantee zero data loss, but it significantly reduces the impact of server failures.
+  The saved state is considered invalid if it is older than a configured threshold (e.g., 30 seconds), in which case the server starts a new match instead of attempting recovery.
+  
+  \item \textbf{Client Failure}: The \texttt{ClientHandler} actively monitors the TCP socket. 
+  If a socket throws an \texttt{EOFError} or \texttt{ConnectionResetError}, the client is considered disconnected. The Room Server updates the player's status within the \texttt{Game Engine} and continues the match for the remaining players.
+  
+  \item \textbf{Graceful Reconnection}: Because the state is preserved in the \texttt{Game Engine} (and backed up in the \texttt{.pkl}), the server retains the disconnected player's \textit{User ID} and avatar state. 
+  If the player re-establishes the TCP connection within a bounded time window, they can reclaim their previous state (position, alive/dead status) and rejoin the match seamlessly.
+\end{itemize}
 
 \subsection{Availability}\label{availability}
 
@@ -297,7 +392,14 @@ Under a network partition, the system behaves as follows (consistent with its AP
 \end{itemize}
 
 \subsubsection{Room Server}
-% TODO
+
+\paragraph{Network Partitioning.}
+Because the Room Server operates on a CP (Consistency/Partition Tolerance) model, it favors consistency over availability.
+If a network partition isolates a client from the Room Server:
+\begin{itemize}
+  \item The server will stop receiving inputs from that client, leaving their player idle.
+  \item Once the TCP's timeout threshold is reached, the server drops the connection to maintain state integrity.
+\end{itemize}
 
 \subsection{Security}\label{security}
 
@@ -327,4 +429,18 @@ All communication (HTTP and UDP) is unencrypted.
 In a production deployment, TLS termination at the ingress level would protect client-to-hub communication, while mutual TLS (mTLS) via a service mesh could secure intra-cluster traffic.
 
 \subsubsection{Room Server}
-% TODO
+
+\paragraph{Authentication.}
+There is minimal authentication at the Room tier. 
+When a client connects, their first message must contain their \textit{Player ID}. 
+The Room Server verifies this ID against the list of expected players provided by the Game Engine during the game startup phase. 
+If the ID is already taken by another connected client, or if it does not match any expected player, the server rejects the connection. 
+
+\paragraph{Authorization (Server-Side Validation).}
+The most critical security mechanism in the Room Server is \textbf{State Authorization}. 
+Clients are not authorized to dictate the game state. They cannot send "I am at coordinate (5,5)"; they can only send "I want to move UP". 
+The Room Server validates every request against the game rules (e.g., checking for wall collisions) before applying it, neutralizing client-side manipulation (e.g., teleportation).
+
+\paragraph{Cryptography.}
+Like the Hub Server, the Room Server relies on unencrypted TCP streams. 
+While vulnerable to packet sniffing, it is deemed acceptable for the purpose of this application.
