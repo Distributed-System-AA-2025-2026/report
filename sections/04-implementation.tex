@@ -86,4 +86,72 @@ The Hub Server is configured entirely through environment variables, enabling Ku
 \end{center}
 
 \subsection{Room Server}\label{implementation-room}
-% TODO
+
+\subsubsection{Network Protocols}
+
+The Room Server utilizes two distinct network protocols to handle client interactions:
+
+\begin{itemize}
+    \item \textbf{TCP} for client-to-server game interactions. 
+    A persistent socket is established between each player and the Room Server. 
+    TCP was chosen over UDP for the game loop because it natively guarantees packet ordering and reliability. 
+    TCP ensures that a player's commands (e.g., planting a bomb) are never lost and arrive in the correct order.
+    
+    \item \textbf{HTTP} for server-to-hub management callbacks. 
+    The Room Server embeds a lightweight HTTP server to respond to health checks (\texttt{GET /status}) from the Hub, and it acts as an HTTP client to push lifecycle events (\texttt{POST /room/\{id\}/start}, \texttt{POST /room/\{id\}/close}) back to the Hub Server.
+\end{itemize}
+
+\subsubsection{Data Representation}
+
+In-transit data representation depends on the direction and type of the payload, although the game loop strictly relies on Protocol Buffers:
+
+\begin{itemize}
+    \item \textbf{Protocol Buffers (protobuf)} are used exclusively for all real-time game communication over the TCP stream, in both directions:
+    \begin{itemize}
+        \item \textit{Client-to-Server}: When a player presses a key, the client encodes the action (e.g., \texttt{MOVE\_UP}, \texttt{PLACE\_BOMB}) into a compact protobuf \texttt{Packet} message.
+        \item \textit{Server-to-Client}: Instead of serializing the complex \texttt{Game Engine} object and sending it over the network, the Room Server pre-renders the game state into an ASCII string. 
+        This string, along with metadata, is packaged into a \texttt{GameStateSnapshot} protobuf message. 
+        This ensures cross-language interoperability, as the client can be implemented in any language with protobuf support, and it abstracts away the internal Python object structure from the network protocol.
+    \end{itemize}
+    
+    \item \textbf{JSON} is used for the HTTP management payloads exchanged with the Hub Server.
+\end{itemize}
+
+\subsubsection{Authentication and Authorization}
+
+\begin{itemize}
+    \item \textbf{Authentication}: Minimal authentication is enforced. 
+    Upon establishing the TCP connection, the client must send a \texttt{JoinRequest} message containing their \texttt{player\_id}.
+    Connection is accepted if the \texttt{player\_id} is unique among currently connected clients, matches the expected format, and the room is not full.
+    
+    \item \textbf{Authorization}: All connected users share the single "Player" role. 
+    However, \textbf{State Authorization} is strictly enforced at the logic level. The server does not trust client state; it only authorizes \textit{intent} (e.g., "move left"). 
+    If a client attempts an illegal move (e.g., moving through a wall), the \texttt{Game Engine} rejects the input, implicitly denying authorization for that action.
+\end{itemize}
+
+\subsubsection{Technological Details}\label{tech-details-room}
+
+\paragraph{Python and Concurrency.}
+The Room Server is implemented in Python. 
+The core concurrency model relies on the standard \texttt{threading} and \texttt{queue} modules. 
+\begin{itemize}
+    \item \textbf{Thread-Safe Queues}: A \texttt{queue.Queue} is used as the primary synchronization primitive between the network layer and the game logic layer. 
+    \texttt{ClientHandler} threads push protobuf-decoded input events into this queue, and the \texttt{GameLoop} thread pops them. 
+    This design avoids the need for explicit \texttt{Lock} objects around the \texttt{Game Engine}.
+\end{itemize}
+
+\paragraph{Threading Model.}
+The Room Server runs the following distinct threads:
+\begin{itemize}
+    \item \textbf{Main Thread}: Listens on the game port, accepting new TCP connections and spawning a \texttt{ClientHandler} for each.
+    \item \textbf{ClientHandler Threads} (Up to 4): Dedicated daemon threads that block on \texttt{socket.recv()}, unpacking header, reading the payload, deserializing the protobuf command, and placing it in the input queue.
+    \item \textbf{GameLoop Thread}: The authoritative heart of the server. It runs an infinite loop while the state is \texttt{PLAYING} or \texttt{WAITING\_FOR\_PLAYERS}. 
+    It processes the input queue, steps the engine forward, maps the state to a Protobuf snapshot, and iterates through the list of active client sockets to send the updated game state.
+    It dynamically yields via \texttt{time.sleep()} to maintain a steady and fixed tick rate.
+    \item \textbf{Management API Thread}: Respond to the Hub's health checks.
+\end{itemize}
+
+\paragraph{Docker and Kubernetes Integration.}
+The Room Server is packaged in a Docker container. 
+It is deployed dynamically by the Hub Server as a raw Kubernetes \texttt{Pod} with a corresponding \texttt{NodePort} service. 
+Configuration (like \texttt{ROOM\_ID} and \texttt{HUB\_API\_URL}) is injected via environment variables at the moment of creation.
