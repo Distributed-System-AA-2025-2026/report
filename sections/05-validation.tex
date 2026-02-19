@@ -33,22 +33,22 @@ The following table summarizes the test distribution across Hub Server component
 
 \begin{center}
   \begin{tabular}{l r l}
-    \textbf{Test File} & \textbf{Tests} & \textbf{Tested Component} \\
+    \textbf{Test File}                         & \textbf{Tests} & \textbf{Tested Component}                     \\
     \hline
-    \texttt{test\_hub\_server.py}           & 50 & HubServer (coordination, gossip handling) \\
-    \texttt{test\_hub\_state.py}            & 39 & HubState (peer list, room registry) \\
-    \texttt{test\_hub\_socket\_handler.py}  & 19 & HubSocketHandler (validation, send) \\
-    \texttt{test\_room\_health\_monitor.py} & 15 & RoomHealthMonitor (HTTP health checks) \\
-    \texttt{test\_hub\_peer.py}             & 11 & HubPeer (value validation) \\
-    \texttt{test\_failure\_detector.py}     & 10 & FailureDetector (timeout logic) \\
-    \texttt{test\_local\_room\_manager.py}  & 10 & LocalRoomManager \\
-    \texttt{test\_room\_manager.py}         &  8 & RoomManagerBase (port allocation, activation) \\
-    \texttt{test\_k8s\_room\_manager.py}    &  8 & K8sRoomManager (K8s-specific logic) \\
-    \texttt{test\_peer\_discovery\_monitor.py} & 8 & PeerDiscoveryMonitor \\
-    \texttt{test\_room.py}                  &  7 & Room (joinability, validation) \\
-    \texttt{test\_server\_reference.py}     &  8 & ServerReference \\
+    \texttt{test\_hub\_server.py}              & 50             & HubServer (coordination, gossip handling)     \\
+    \texttt{test\_hub\_state.py}               & 39             & HubState (peer list, room registry)           \\
+    \texttt{test\_hub\_socket\_handler.py}     & 19             & HubSocketHandler (validation, send)           \\
+    \texttt{test\_room\_health\_monitor.py}    & 15             & RoomHealthMonitor (HTTP health checks)        \\
+    \texttt{test\_hub\_peer.py}                & 11             & HubPeer (value validation)                    \\
+    \texttt{test\_failure\_detector.py}        & 10             & FailureDetector (timeout logic)               \\
+    \texttt{test\_local\_room\_manager.py}     & 10             & LocalRoomManager                              \\
+    \texttt{test\_room\_manager.py}            & 8              & RoomManagerBase (port allocation, activation) \\
+    \texttt{test\_k8s\_room\_manager.py}       & 8              & K8sRoomManager (K8s-specific logic)           \\
+    \texttt{test\_peer\_discovery\_monitor.py} & 8              & PeerDiscoveryMonitor                          \\
+    \texttt{test\_room.py}                     & 7              & Room (joinability, validation)                \\
+    \texttt{test\_server\_reference.py}        & 8              & ServerReference                               \\
     \hline
-    \textbf{Total}                          & \textbf{193} & (+ 1 sanity test) \\
+    \textbf{Total}                             & \textbf{193}   & (+ 1 sanity test)                             \\
   \end{tabular}
 \end{center}
 
@@ -58,58 +58,58 @@ The tests cover the following categories of business logic, each motivated by sp
 
 \begin{enumerate}
   \item \textbf{Hostname Parsing and Initialization} (TestGetHubIndex, TestHubServerCreation -- \textit{Req: Peer Discovery}).
-  Validates that hub index derivation from hostnames works correctly across formats (\texttt{hub-0}, \texttt{hub-0.local}, \texttt{hub-99.svc.cluster.local}), and rejects malformed inputs (whitespace, non-numeric indices, wrong prefixes).
-  Verifies that invalid configuration (zero/negative fanout, missing environment variables) is rejected at startup.
+        Validates that hub index derivation from hostnames works correctly across formats (\texttt{hub-0}, \texttt{hub-0.local}, \texttt{hub-99.svc.cluster.local}), and rejects malformed inputs (whitespace, non-numeric indices, wrong prefixes).
+        Verifies that invalid configuration (zero/negative fanout, missing environment variables) is rejected at startup.
 
   \item \textbf{Gossip Message Processing Pipeline} (TestHubServerOnGossipMessage, TestHubServerMessageProcessing -- \textit{Req: Gossip-Based State Synchronization}).
-  Tests the full receive pipeline: duplicate detection via nonce comparison, heartbeat update, payload dispatch to the correct handler, and message forwarding.
-  Verifies that stale messages (nonce $\leq$ stored heartbeat) are silently discarded.
-  Covers all 9 event types through the dispatch mechanism.
+        Tests the full receive pipeline: duplicate detection via nonce comparison, heartbeat update, payload dispatch to the correct handler, and message forwarding.
+        Verifies that stale messages (nonce $\leq$ stored heartbeat) are silently discarded.
+        Covers all 9 event types through the dispatch mechanism.
 
   \item \textbf{Peer Lifecycle Handlers} (TestHubServerMessageProcessing -- \textit{Req: Peer Discovery, Failure Detection}).
-  Validates each peer event handler in isolation:
-  \texttt{PEER\_JOIN} creates a new peer in state;
-  \texttt{PEER\_LEAVE} marks the peer as dead;
-  \texttt{PEER\_ALIVE} resets a suspected peer to alive;
-  \texttt{PEER\_SUSPICIOUS} triggers an alive broadcast only when the local hub is the suspected one;
-  \texttt{PEER\_DEAD} removes a peer only if it was already suspected (trusting the local failure detector over remote declarations for alive peers).
+        Validates each peer event handler in isolation:
+        \texttt{PEER\_JOIN} creates a new peer in state;
+        \texttt{PEER\_LEAVE} marks the peer as dead;
+        \texttt{PEER\_ALIVE} resets a suspected peer to alive;
+        \texttt{PEER\_SUSPICIOUS} triggers an alive broadcast only when the local hub is the suspected one;
+        \texttt{PEER\_DEAD} removes a peer only if it was already suspected (trusting the local failure detector over remote declarations for alive peers).
 
   \item \textbf{Failure Detection Logic} (TestFailureDetectorCheckPeers -- \textit{Req: Failure Detection}).
-  Tests the two-phase timeout state machine with controlled time mocking:
-  alive peers within \texttt{SUSPECT\_TIMEOUT} remain unchanged;
-  alive peers past \texttt{SUSPECT\_TIMEOUT} transition to suspected;
-  suspected peers past \texttt{DEAD\_TIMEOUT} transition to dead;
-  alive peers past \texttt{DEAD\_TIMEOUT} skip suspected and go directly to dead;
-  dead peers are ignored (no further transitions).
-  Self-exclusion is verified (a hub never suspects itself).
+        Tests the two-phase timeout state machine with controlled time mocking:
+        alive peers within \texttt{SUSPECT\_TIMEOUT} remain unchanged;
+        alive peers past \texttt{SUSPECT\_TIMEOUT} transition to suspected;
+        suspected peers past \texttt{DEAD\_TIMEOUT} transition to dead;
+        alive peers past \texttt{DEAD\_TIMEOUT} skip suspected and go directly to dead;
+        dead peers are ignored (no further transitions).
+        Self-exclusion is verified (a hub never suspects itself).
 
   \item \textbf{Room Lifecycle Management} (TestHubServerMessageProcessing, TestHubServerGetOrActivateRoom, TestHubServerBroadcasts -- \textit{Req: Room Lifecycle Management, Client Matchmaking}).
-  Verifies the full room lifecycle through gossip:
-  \texttt{ROOM\_ACTIVATED} adds a remote room to local state;
-  \texttt{ROOM\_STARTED} transitions to PLAYING;
-  \texttt{ROOM\_CLOSED} transitions to DORMANT.
-  Tests the matchmaking logic: returns an existing joinable room with incremented player count, activates a new room when none available, returns \texttt{None} when activation fails.
+        Verifies the full room lifecycle through gossip:
+        \texttt{ROOM\_ACTIVATED} adds a remote room to local state;
+        \texttt{ROOM\_STARTED} transitions to PLAYING;
+        \texttt{ROOM\_CLOSED} transitions to DORMANT.
+        Tests the matchmaking logic: returns an existing joinable room with incremented player count, activates a new room when none available, returns \texttt{None} when activation fails.
 
   \item \textbf{Room Health Monitoring} (TestRoomHealthMonitorIsRoomHealthy, TestRoomHealthMonitorCheckAllRooms, TestHubServerRoomUnhealthy -- \textit{Req: Failure Detection}).
-  Tests HTTP health check logic: healthy rooms (correct status code + expected status) pass, rooms returning wrong status codes, unexpected statuses, timeouts, or connection errors are flagged as unhealthy.
-  Verifies differentiated handling: local unhealthy rooms transition to PLAYING (with gossip broadcast), remote unhealthy rooms are removed from state.
-  Checks that only ACTIVE rooms with known internal services are health-checked.
+        Tests HTTP health check logic: healthy rooms (correct status code + expected status) pass, rooms returning wrong status codes, unexpected statuses, timeouts, or connection errors are flagged as unhealthy.
+        Verifies differentiated handling: local unhealthy rooms transition to PLAYING (with gossip broadcast), remote unhealthy rooms are removed from state.
+        Checks that only ACTIVE rooms with known internal services are health-checked.
 
   \item \textbf{State Management} (TestHubStatePeerManagement, TestHubStateHeartbeatCheck, TestHubStateRoomManagement -- \textit{Req: Gossip-Based State Synchronization, Eventual Consistency}).
-  Covers peer list operations (add, remove, get with gaps, exclusion filters), heartbeat check logic (duplicate detection, dead peer resurrection, leave message suppression for already-dead peers), and room registry operations (add, get, status transitions, active room lookup by joinability).
+        Covers peer list operations (add, remove, get with gaps, exclusion filters), heartbeat check logic (duplicate detection, dead peer resurrection, leave message suppression for already-dead peers), and room registry operations (add, get, status transitions, active room lookup by joinability).
 
   \item \textbf{Input Validation and Edge Cases} (TestHubPeer, TestRoom, TestHubSocketHandlerValidation, TestServerReference -- \textit{Req: general robustness}).
-  Validates domain entity invariants: negative indices rejected, invalid status strings rejected, negative heartbeats rejected, negative player counts rejected, player count exceeding max rejected.
-  Socket handler validates callback signature (parameter count, callable check, None check).
-  Room joinability is parametrized across all status/player-count combinations, including boundary conditions (exactly full, zero max players).
+        Validates domain entity invariants: negative indices rejected, invalid status strings rejected, negative heartbeats rejected, negative player counts rejected, player count exceeding max rejected.
+        Socket handler validates callback signature (parameter count, callable check, None check).
+        Room joinability is parametrized across all status/player-count combinations, including boundary conditions (exactly full, zero max players).
 
   \item \textbf{Peer Discovery} (TestHubServerDiscoveryPeers, TestPeerDiscoveryMonitor -- \textit{Req: Peer Discovery and Membership}).
-  Verifies discovery behavior per mode: manual mode hub-0 does not send (it is the bootstrap node), non-zero hubs in manual mode send to a random peer, K8s mode sends with DNS-based addressing.
-  PeerDiscoveryMonitor triggers callback when alive peer count is below fanout.
+        Verifies discovery behavior per mode: manual mode hub-0 does not send (it is the bootstrap node), non-zero hubs in manual mode send to a random peer, K8s mode sends with DNS-based addressing.
+        PeerDiscoveryMonitor triggers callback when alive peer count is below fanout.
 
   \item \textbf{Message Forwarding} (TestHubServerForwardAndDiscovery -- \textit{Req: Gossip-Based State Synchronization}).
-  Verifies that forwarded messages have the \texttt{forwarded\_by} field updated to the current hub's index.
-  Tests server reference calculation for both manual (localhost + port offset) and K8s (DNS-based) modes.
+        Verifies that forwarded messages have the \texttt{forwarded\_by} field updated to the current hub's index.
+        Tests server reference calculation for both manual (localhost + port offset) and K8s (DNS-based) modes.
 \end{enumerate}
 
 \paragraph{Bug Discovery.}
@@ -131,27 +131,27 @@ Manual acceptance testing was performed for scenarios that are difficult or impr
 
 \begin{enumerate}
   \item \textbf{Multi-Hub Gossip Convergence.}
-  Three hub instances were started locally in manual mode.
-  A room was activated on hub-0, and the \texttt{/debug/} endpoint on hub-1 and hub-2 was inspected to verify that the \texttt{ROOM\_ACTIVATED} event propagated correctly.
-  Player joins were triggered via \texttt{/matchmaking} on different hubs and convergence of player counts was observed.
-  \textit{Why not automated:} requires multiple concurrent processes with real UDP networking; integration test infrastructure was not implemented within the project timeline.
+        Three hub instances were started locally in manual mode.
+        A room was activated on hub-0, and the \texttt{/debug/} endpoint on hub-1 and hub-2 was inspected to verify that the \texttt{ROOM\_ACTIVATED} event propagated correctly.
+        Player joins were triggered via \texttt{/matchmaking} on different hubs and convergence of player counts was observed.
+        \textit{Why not automated:} requires multiple concurrent processes with real UDP networking; integration test infrastructure was not implemented within the project timeline.
 
   \item \textbf{Failure Detection and Recovery.}
-  A hub instance was started, then killed (SIGKILL) to simulate a crash.
-  The remaining hubs were monitored via \texttt{/debug/} to verify that the killed hub transitioned from alive $\rightarrow$ suspected $\rightarrow$ dead within the expected timeout windows.
-  The killed hub was restarted, and its reintegration into the cluster (via \texttt{PEER\_JOIN} and heartbeat resurrection) was verified.
-  \textit{Why not automated:} requires process-level control and real timing; unit tests cover the logic with mocked time, but the end-to-end timing behavior needed manual verification.
+        A hub instance was started, then killed (SIGKILL) to simulate a crash.
+        The remaining hubs were monitored via \texttt{/debug/} to verify that the killed hub transitioned from alive $\rightarrow$ suspected $\rightarrow$ dead within the expected timeout windows.
+        The killed hub was restarted, and its reintegration into the cluster (via \texttt{PEER\_JOIN} and heartbeat resurrection) was verified.
+        \textit{Why not automated:} requires process-level control and real timing; unit tests cover the logic with mocked time, but the end-to-end timing behavior needed manual verification.
 
   \item \textbf{Kubernetes Deployment.}
-  The full system was deployed as a StatefulSet on a local Kubernetes cluster (Minikube).
-  Hub discovery via DNS, room pod creation via the Kubernetes API, NodePort service creation, and room health monitoring were verified by inspecting pod logs and the \texttt{/debug/} endpoint.
-  \textit{Why not automated:} requires a running Kubernetes cluster with specific configuration (namespace, RBAC, images); this constitutes an environment-level integration test that exceeds the scope of the automated test suite.
+        The full system was deployed as a StatefulSet on a local Kubernetes cluster (Minikube).
+        Hub discovery via DNS, room pod creation via the Kubernetes API, NodePort service creation, and room health monitoring were verified by inspecting pod logs and the \texttt{/debug/} endpoint.
+        \textit{Why not automated:} requires a running Kubernetes cluster with specific configuration (namespace, RBAC, images); this constitutes an environment-level integration test that exceeds the scope of the automated test suite.
 
   \item \textbf{Client Matchmaking End-to-End.}
-  A client sent a \texttt{POST /matchmaking} request to the hub.
-  The returned room address and port were used to establish a TCP connection to the Room Server.
-  Game start and close callbacks (\texttt{/room/\{id\}/start}, \texttt{/room/\{id\}/close}) were triggered, and the gossip propagation of the corresponding events was verified on other hubs.
-  \textit{Why not automated:} requires the full stack (hub + room + client) running simultaneously; this is an end-to-end test that crosses component boundaries.
+        A client sent a \texttt{POST /matchmaking} request to the hub.
+        The returned room address and port were used to establish a TCP connection to the Room Server.
+        Game start and close callbacks (\texttt{/room/\{id\}/start}, \texttt{/room/\{id\}/close}) were triggered, and the gossip propagation of the corresponding events was verified on other hubs.
+        \textit{Why not automated:} requires the full stack (hub + room + client) running simultaneously; this is an end-to-end test that crosses component boundaries.
 \end{enumerate}
 
 \subsubsection{Room Server}
