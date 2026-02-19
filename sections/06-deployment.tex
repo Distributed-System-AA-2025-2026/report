@@ -1,17 +1,159 @@
 \section{Deployment}\label{deployment}
 
-\begin{itemize}
-  \item should one install your software from scratch, how to do it?
-  %
-  \begin{itemize}
-    \item provide instructions
-    \item provide expected outcomes
-  \end{itemize}
+\subsection{Hub Server}\label{deployment-hub}
 
-  \item what software should be installed on the machines to run your project?
-  which versions?
-  
-  \item should one set environment variables or configuration files?
-  \item if you're using containerization (e.g.~Docker), 
-  describe how you engineered your deployment scrips (e.g. \texttt{docker-compose.yml} files)
+\subsubsection{Prerequisites}
+
+The following software is required on the deployment machine:
+
+\begin{center}
+  \begin{tabular}{l l l}
+    \textbf{Software} & \textbf{Version} & \textbf{Purpose} \\
+    \hline
+    MicroK8s        & v1.32.9           & Kubernetes distribution \\
+    Docker          & 20.10+            & Image building \\
+    Python          & 3.11+             & Application runtime (inside containers) \\
+    Poetry          & 1.7.1             & Dependency management (inside containers) \\
+  \end{tabular}
+\end{center}
+
+MicroK8s must have the following addons enabled: \texttt{dns}, \texttt{ingress}, \texttt{storage}, and \texttt{rbac}.
+
+\subsubsection{Container Images}
+
+Both the Hub Server and the Room Server are packaged as Docker images using \textbf{multi-stage builds} to minimize image size.
+The build process is defined in \texttt{docker/Dockerfile.hub} and \texttt{docker/Dockerfile.room}.
+
+\paragraph{Build Strategy.}
+Each Dockerfile uses two stages:
+\begin{enumerate}
+  \item \textbf{Builder stage}: installs Poetry and resolves dependencies from \texttt{pyproject.toml} and \texttt{poetry.lock}, without creating a virtual environment (\texttt{virtualenvs.create false}). Only production dependencies are installed (\texttt{--only main}).
+  \item \textbf{Runtime stage}: copies the installed packages from the builder, adds the application code, and configures a non-root user (\texttt{bomberman}, UID 1000) for security.
+\end{enumerate}
+
+The Hub image exposes port 8000 (HTTP) and 9000/UDP (gossip).
+The Room image exposes port 5000 (TCP game socket).
+Both images include a Docker \texttt{HEALTHCHECK} that verifies socket connectivity.
+
+\subsubsection{Kubernetes Manifests}
+
+The deployment is defined by a set of Kubernetes manifests in \texttt{k8s/base/hub/}:
+
+\paragraph{Namespace} (\texttt{namespace.yaml}).
+All resources are deployed in a dedicated \texttt{bomberman} namespace, isolating the application from other workloads on the cluster.
+
+\paragraph{ConfigMap} (\texttt{configmap.yaml}).
+Centralizes all Hub Server configuration:
+\begin{verbatim}
+HUB_DISCOVERY_MODE: "k8s"
+GOSSIP_PORT: "9000"
+HTTP_PORT: "8000"
+FANOUT: "4"
+EXPECTED_HUB_COUNT: "16"
+FAILURE_DETECTOR_SUSPECT_TIMEOUT: "5"
+FAILURE_DETECTOR_DEAD_TIMEOUT: "20"
+FAILURE_DETECTOR_CHECK_INTERVAL: "1"
+SERVICE_NAME: "hub-service"
+\end{verbatim}
+Changing these values and restarting the StatefulSet reconfigures the cluster without rebuilding images.
+
+\paragraph{RBAC} (\texttt{rbac.yaml}).
+Defines a \texttt{ServiceAccount}, a \texttt{Role} granting permissions to create, delete, list, and manage pods, services, and configmaps within the \texttt{bomberman} namespace, and a \texttt{RoleBinding} linking the two.
+This is required because the \texttt{K8sRoomManager} dynamically creates room pods and services via the Kubernetes API.
+
+\paragraph{StatefulSet} (\texttt{statefulset.yaml}).
+The Hub Server runs as a StatefulSet with 16 replicas and \texttt{Parallel} pod management policy (all pods start simultaneously rather than sequentially).
+Key configuration:
+\begin{itemize}
+  \item \textbf{Stable hostnames}: each pod receives a predictable hostname (e.g., \texttt{hub-0}, \texttt{hub-1}), which the application uses to derive the hub index.
+  \item \textbf{FQDN construction}: the \texttt{HOSTNAME} environment variable is composed at deploy-time from \texttt{POD\_NAME}, \texttt{SERVICE\_NAME}, and \texttt{NAMESPACE} using Kubernetes variable interpolation (e.g., \texttt{hub-0.hub-service.bomberman.svc.cluster.local}).
+  \item \textbf{Anti-affinity}: a soft pod anti-affinity rule prefers scheduling hub pods on different nodes, improving fault tolerance in multi-node clusters.
+  \item \textbf{Health probes}: a liveness probe on \texttt{/health} (initial delay 30s, period 10s) and a readiness probe on \texttt{/ready} (initial delay 10s, period 5s) allow Kubernetes to detect and restart unhealthy hubs.
+  \item \textbf{Resource limits}: each pod requests 128Mi memory / 100m CPU, limited to 512Mi / 500m.
+  \item \textbf{Security context}: pods run as non-root (UID 1000), with privilege escalation disabled and all Linux capabilities dropped.
 \end{itemize}
+
+\paragraph{Services} (\texttt{service.yaml}).
+Two services are defined:
+\begin{itemize}
+  \item \textbf{hub-service} (headless, \texttt{clusterIP: None}): enables DNS-based peer discovery. Each pod is resolvable as \texttt{hub-\{i\}.hub-service.bomberman.svc.cluster.local}. Exposes both HTTP (8000/TCP) and gossip (9000/UDP) ports.
+  \item \textbf{hub-api} (NodePort): exposes the HTTP API externally on port 80 $\rightarrow$ 8000, allowing clients outside the cluster to reach the matchmaking endpoint.
+\end{itemize}
+
+\paragraph{Ingress} (\texttt{ingress.yaml}).
+Routes traffic for \texttt{hub.bomberman.local} to the \texttt{hub-api} service.
+The Ingress acts as a load balancer across all hub pods for incoming HTTP requests.
+
+\subsubsection{Deployment Procedure}
+
+\paragraph{Local Deployment.}
+The \texttt{deploy-local.sh} script automates the full deployment:
+
+\begin{verbatim}
+./k8s/scripts/deploy-local.sh
+\end{verbatim}
+
+The script performs the following steps:
+\begin{enumerate}
+  \item Verifies that MicroK8s is installed and running.
+  \item Builds the Hub and Room Docker images locally.
+  \item Imports the images into the MicroK8s container runtime (\texttt{microk8s ctr image import}).
+  \item Applies all Kubernetes manifests in order: namespace, configmap, RBAC, StatefulSet, services, ingress.
+  \item Waits for all hub pods to become ready (timeout: 300 seconds).
+  \item Prints deployment status, access URLs, and useful debugging commands.
+\end{enumerate}
+
+Expected outcome: 16 hub pods running in the \texttt{bomberman} namespace, reachable via the ingress at \texttt{http://hub.bomberman.local} and via NodePort at \texttt{http://<node-ip>:<node-port>}.
+
+\paragraph{CI/CD Pipeline.}
+The project uses GitHub Actions with two workflows:
+
+\begin{itemize}
+  \item \textbf{CI} (\texttt{ci.yml}): triggered on push/PR to \texttt{main}/\texttt{master}. Sets up Python 3.11, installs dependencies via Poetry (with caching), runs the linter (\texttt{ruff}), and executes the full test suite. Test results are uploaded as artifacts.
+  \item \textbf{CD} (\texttt{cd.yml}): triggered automatically when CI passes on \texttt{main}/\texttt{master}, or manually via \texttt{workflow\_dispatch}. Builds both Docker images and pushes them to the GitHub Container Registry (GHCR) with \texttt{latest} and commit-SHA tags. A \texttt{deploy} job then runs on a \textbf{self-hosted runner} co-located with the MicroK8s cluster: it pulls the images from GHCR, imports them into MicroK8s, applies all Kubernetes manifests, and performs a rolling restart of the StatefulSet.
+\end{itemize}
+
+\subsubsection{Production Network Topology}
+
+The production deployment uses a split-infrastructure architecture due to resource constraints:
+
+\begin{itemize}
+  \item A \textbf{MicroK8s node} (private network) runs the Kubernetes cluster with all hub and room pods.
+  \item A \textbf{public VPS} (\texttt{bomberman.romanellas.cloud}) acts as a reverse proxy, terminating TLS and forwarding traffic to the MicroK8s node.
+  \item The two machines are connected via a \textbf{ZeroTier} virtual private network, providing a secure layer-2 tunnel without requiring public IP exposure on the MicroK8s node.
+\end{itemize}
+
+\paragraph{HTTP Traffic (Client $\rightarrow$ Hub).}
+An Nginx reverse proxy on the public VPS forwards HTTPS traffic to the MicroK8s Ingress:
+\begin{enumerate}
+  \item Client connects to \texttt{https://bomberman.romanellas.cloud}.
+  \item Nginx terminates TLS (Let's Encrypt certificate) and proxies to \texttt{http://hub.bomberman.local} over the ZeroTier tunnel.
+  \item The MicroK8s Ingress distributes the request to an available hub pod.
+\end{enumerate}
+
+\paragraph{Game Traffic (Client $\rightarrow$ Room).}
+Room Servers are exposed via NodePort services on ports 30000--32767.
+The public VPS forwards this port range to the MicroK8s node using \texttt{iptables} NAT rules:
+\begin{verbatim}
+iptables -t nat -A PREROUTING -p tcp --dport 30000:32767 \
+    -j DNAT --to-destination <microk8s-zerotier-ip>
+iptables -t nat -A POSTROUTING -p tcp -d <microk8s-zerotier-ip> \
+    --dport 30000:32767 -j MASQUERADE
+\end{verbatim}
+This allows clients to connect directly to room game sockets via the public VPS address and the NodePort assigned to each room.
+
+\subsection{Room Server}\label{deployment-room}
+The Room Server does not have an independent deployment procedure.
+Room instances are created \textbf{on-demand} by the Hub Server's \texttt{K8sRoomManager}, which dynamically provisions Kubernetes pods and NodePort services when a room needs to be activated.
+
+Concretely, the Room Server deployment is embedded in the Hub Server deployment:
+\begin{itemize}
+  \item The Room Docker image (\texttt{bomberman-room:latest}) is built and imported into MicroK8s during the same deployment step as the Hub image (both in \texttt{deploy-local.sh} and in the CD pipeline).
+  \item When a client requests matchmaking and no joinable room exists, the Hub's \texttt{K8sRoomManager} calls the Kubernetes API to create a new room pod (using the pre-loaded image) and its associated NodePort service.
+  \item On startup, each hub pre-creates a pool of dormant rooms (\texttt{STARTING\_POOL\_SIZE = 1} in K8s mode). Additional rooms are created dynamically if the pool is exhausted.
+  \item On shutdown, the Hub cleans up all room pods and services it owns via \texttt{RoomManager.cleanup()}.
+\end{itemize}
+
+The Room image is pre-loaded into the MicroK8s container runtime with \texttt{imagePullPolicy: Never}, so pod creation does not require pulling from a remote registry. This reduces room activation latency to the time needed for pod scheduling and container startup.
+
+No separate Kubernetes manifests (StatefulSet, Deployment) are needed for room pods — they are created imperatively by the Hub via the Kubernetes API, labeled with \texttt{app=room}, \texttt{room-id}, and \texttt{owner-hub} for identification and recovery after hub restarts.
