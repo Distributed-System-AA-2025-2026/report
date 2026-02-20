@@ -1,5 +1,61 @@
 \section{Future works}\label{future-works}
 
-Discuss possible future works, improvements, extensions, optimizations, etc.
+\subsection{Hub Server}
 
-Also discuss here any unimplemented feature, and how you would have implemented it.
+\paragraph{Eager Push / Lazy Pull Gossip.}
+The current gossip protocol relies exclusively on eager push: every message is forwarded immediately to a random subset of peers.
+If a message is lost (UDP drop, temporary peer unavailability), there is no recovery mechanism.
+A hybrid \textit{eager push / lazy pull} approach would improve reliability without sacrificing the AP model: hubs would periodically exchange compact state digests (e.g., per-origin nonce vectors), and request missing updates from peers that advertise newer state.
+This adds convergence guarantees while keeping the protocol fully asynchronous and partition-tolerant.
+
+\paragraph{Gossip Protocol Authentication.}
+As discussed in \cref{security}, gossip messages are currently unauthenticated.
+A practical improvement would be to add HMAC-based message signing using a shared secret distributed via Kubernetes Secrets.
+Each gossip message would include a signature computed over its serialized payload, and receiving hubs would discard messages with invalid signatures.
+This prevents gossip injection attacks without requiring a full PKI infrastructure.
+
+\paragraph{Weighted Room Assignment.}
+The current matchmaking logic returns the first joinable room found in the local state.
+A smarter strategy would consider room fill level, geographic proximity (if hubs are distributed across regions), and hub load.
+For example, preferring rooms that are closer to being full (to consolidate players and free up resources) or rooms owned by the local hub (to minimize cross-hub coordination).
+
+\paragraph{Graceful Hub Scaling.}
+Currently, scaling the cluster requires updating the \texttt{EXPECTED\_HUB\_COUNT} in the ConfigMap and restarting the StatefulSet.
+An improvement would be to make the expected hub count dynamic: new hubs joining the cluster would announce themselves via \texttt{PEER\_JOIN}, and existing hubs would adjust their discovery behavior automatically.
+This would enable Kubernetes Horizontal Pod Autoscaler integration, scaling the hub cluster based on matchmaking request rate.
+
+\paragraph{Gossip Protocol Metrics.}
+Adding observability to the gossip layer would aid debugging and performance tuning in production.
+Useful metrics include: messages sent/received per second, duplicate message rate, average propagation latency (time from origin to last hub), peer churn rate, and fanout utilization.
+These could be exposed via a Prometheus-compatible \texttt{/metrics} endpoint and visualized in Grafana.
+
+\subsection{Room Server}
+
+\paragraph{Spectator Mode.}
+Currently, only active players can connect to a room.
+Adding a spectator mode would allow additional clients to observe the game in real time without participating.
+Spectators would receive the same state broadcasts as players but would be excluded from the game engine's input processing.
+
+\paragraph{Persistent Game History.}
+The \texttt{GameStatePersistence} module currently handles in-memory state snapshots.
+Extending it with a lightweight persistent backend (e.g., SQLite per room, or a shared Redis instance) would enable game replay, player statistics, and leaderboards across sessions.
+
+\paragraph{Dynamic Map Generation.}
+The current game map is fixed.
+A procedural map generator that varies wall placement, map size, and power-up distribution based on player count would improve replayability.
+The generator could be seeded deterministically to ensure all clients render the same map.
+
+\subsection{General}
+
+\paragraph{End-to-End Encryption.}
+Currently, all communication exception for client-hub is unencrypted within the cluster.
+We could provide mutual TLS between all components.
+
+\paragraph{Client Reconnection.}
+If a client disconnects during a game (network failure, crash), there is currently no way to rejoin the same room.
+Implementing a session token mechanism --- where the hub assigns a token at matchmaking time and the room accepts reconnections bearing that token within a grace period --- would improve the player experience on unstable networks.
+
+\paragraph{Cross-Region Deployment.}
+The current deployment assumes a single Kubernetes cluster.
+Extending the gossip protocol to span multiple clusters (e.g., one per geographic region) would enable global matchmaking with region-aware room assignment.
+This would require gossip messages to traverse inter-cluster links (e.g., via a dedicated gateway hub per region) and a latency-aware room selection strategy.

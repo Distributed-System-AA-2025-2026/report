@@ -57,7 +57,7 @@ The \texttt{kubernetes} Python library (official client) is used by the \texttt{
 The Hub Server runs multiple concurrent threads:
 \begin{itemize}
   \item \textbf{Main thread}: runs the Uvicorn/FastAPI event loop, handling HTTP requests.
-  \item \textbf{Listener thread}: runs the UDP receive loop in \texttt{HubSocketHandler}, spawning a new daemon thread per received datagram.
+  \item \textbf{Listener thread}: runs the UDP receive loop in \texttt{HubSocketHandler}.
   \item \textbf{FailureDetector thread}: periodic peer liveness checks (configurable interval, default 1 second).
   \item \textbf{PeerDiscoveryMonitor thread}: periodic peer count checks (configurable interval, default 60 seconds).
   \item \textbf{RoomHealthMonitor thread}: periodic room HTTP health checks (every 15 seconds).
