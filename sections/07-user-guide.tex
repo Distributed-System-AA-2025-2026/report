@@ -1,11 +1,84 @@
 \section{User Guide}\label{user-guide}
 
-\begin{itemize}
-  \item how to use your software?
-  %
-  \begin{itemize}
-    \item provide instructions
-    \item provide expected outcomes
-    \item provide screenshots if possible
-  \end{itemize}
-\end{itemize}
+\subsection{Starting the Client}
+
+Ensure the Python environment is activated, then launch the client:
+
+\begin{verbatim}
+python3 Client.py
+\end{verbatim}
+
+The client automatically contacts the Hub Server via the \texttt{/matchmaking} endpoint to obtain a room assignment.
+This process is transparent to the user: the client resolves the room address and establishes a TCP connection without manual configuration.
+
+\subsection{Joining a Game}
+
+Upon connection, the client prompts for a player identifier, as shown in \cref{fig:client-player-id}.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\textwidth]{figures/client-player-id.png}
+    \caption{The client prompts the user to enter a Player ID.}
+    \label{fig:client-player-id}
+\end{figure}
+
+After entering a Player ID, the client connects to the assigned room.
+The game map is displayed in an ASCII grid, and the interface shows the current game state along with the number of players needed to start (\cref{fig:client-waiting}).
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\textwidth]{figures/client-waiting.png}
+    \caption{The player has joined the room and is waiting for other players. The map is visible, with the player's character placed on the grid.}
+    \label{fig:client-waiting}
+\end{figure}
+
+\subsection{Game Start}
+
+When a second player joins the room, a countdown timer begins, as shown in \cref{fig:client-countdown}.
+The countdown gives additional players time to join before the game starts.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\textwidth]{figures/client-countdown.png}
+    \caption{A second player (F) has joined. The countdown to game start is displayed.}
+    \label{fig:client-countdown}
+\end{figure}
+
+The countdown duration decreases as more players join.
+Once four players are connected, the countdown is shortened and the game starts quickly.
+
+\subsection{Controls}
+
+During gameplay, the player controls their character using the keyboard:
+
+\begin{center}
+    \begin{tabular}{c l}
+        \textbf{Key} & \textbf{Action} \\
+        \hline
+        \texttt{W} & Move up \\
+        \texttt{A} & Move left \\
+        \texttt{S} & Move down \\
+        \texttt{D} & Move right \\
+        \texttt{E} & Place bomb \\
+        \texttt{Q} & Quit the game \\
+    \end{tabular}
+\end{center}
+
+The objective is to eliminate all other players by placing bombs.
+Bombs explode after a short delay, destroying breakable walls (represented by \texttt{+}) and eliminating players caught in the blast radius (represented by \texttt{*}).
+The \texttt{\#} symbols represent indestructible walls.
+
+\subsection{Game Over}
+
+When only one player remains, the game ends and the winner is announced (\cref{fig:client-gameover}).
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\textwidth]{figures/client-gameover.png}
+    \caption{The game has ended. The winner is displayed, and the server announces a reset.}
+    \label{fig:client-gameover}
+\end{figure}
+
+After the game ends, the server resets and the client disconnects.
+The terminal returns to the working directory.
+To play again, the user must restart the client with \texttt{python3 Client.py}.
