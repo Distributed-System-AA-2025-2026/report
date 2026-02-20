@@ -1,9 +1,40 @@
 \section{Self-evaluation}\label{self-evaluation}
 
+\subsection{Enrico Ferraiolo}
+% TODO
+
+\subsection{Daniele Romanella}
+
+\subsubsection{Role}
+
+My primary responsibility was the design and implementation of the \textbf{Hub Server}, the AP-oriented component of the distributed system.
+This included the full gossip protocol (peer lifecycle, room lifecycle, fanout-based forwarding, nonce-based deduplication), the failure detection subsystem, the peer discovery mechanism, the room management layer (both local and Kubernetes-based), and the room health monitoring system.
+
+In addition to the application code, I was responsible for the \textbf{infrastructure and DevOps} side of the project:
+the Docker multi-stage builds, the Kubernetes manifests (StatefulSet, headless Service, RBAC, Ingress, ConfigMap), the CI/CD pipeline (GitHub Actions with automated testing, container registry publishing, and deployment to a self-hosted runner), and the production network setup (ZeroTier VPN tunnel, Nginx TLS termination, iptables NAT forwarding for game traffic).
+
+I also wrote the \textbf{unit test suite} for the Hub Server (194 tests across 13 files), designed to target business logic exclusively and to surface real bugs rather than verify trivial implementation details.
+
+Finally, I authored the Hub Server sections of the technical report.
+
+\subsubsection{Strengths}
+
 \begin{itemize}
-  \item An individual section is required for each member of the group
-  \item Each member must self-evaluate their work, listing the strengths and weaknesses of the product
-  \item Each member must describe their role within the group as objectively as possible.
+  \item \textbf{Coherent distributed design.} The Hub Server consistently follows the AP model from design through implementation. Every architectural decision (gossip over UDP, in-memory state, fanout-bounded forwarding, eventual consistency) is motivated by the CAP trade-off and maps directly to a requirement. There are no ad-hoc choices disconnected from the overall design rationale.
+
+  \item \textbf{Robustness of the gossip protocol.} The protocol handles a wide range of scenarios: duplicate messages (nonce-based deduplication), peer crashes and restarts (dead peer resurrection via heartbeat check), transient failures (two-phase failure detection with suspect $\rightarrow$ dead progression), network partitions (independent operation per partition with automatic reconvergence), and cluster scaling (dynamic peer discovery when alive count drops below fanout).
+
+  \item \textbf{Production-grade deployment.} The system is not just a prototype: it runs on a real Kubernetes cluster with health probes, security contexts, resource limits, RBAC, and a fully automated CI/CD pipeline. The split-infrastructure setup with ZeroTier and iptables forwarding demonstrates the ability to solve real operational constraints.
+
+  \item \textbf{Testing methodology.} The test suite focuses on business logic and edge cases, uncovering actual bugs (peer equality comparison, heartbeat timestamp on resurrection, room validation). Red tests that document incorrect behavior were used as a diagnostic tool during development. Coverage targets meaningful code paths rather than line-count metrics.
+
+  \item \textbf{Dynamic room provisioning.} The \texttt{K8sRoomManager} creates room pods on demand via the Kubernetes API, with automatic recovery of existing rooms after hub restarts. This eliminates the need for a static room pool and allows the system to scale room capacity based on actual demand.
 \end{itemize}
 
-It should be noted that each student is only responsible for their own section.
+\subsubsection{Weaknesses}
+
+\begin{itemize}
+  \item \textbf{No message acknowledgment in the gossip layer.} Gossip messages are fire-and-forget over UDP: there is no ACK mechanism to confirm that a peer has received and processed a message. This is a deliberate consequence of the AP orientation --- adding ACKs would introduce synchronous coordination and move the system toward CP behavior. However, it means that in low-fanout or high-loss scenarios, some messages may fail to propagate. A lightweight protocol like \textit{eager push with lazy pull} (where peers periodically request missing updates) would mitigate this without sacrificing the AP model.
+
+  \item \textbf{No authentication or encryption.} All endpoints (HTTP and UDP) are unauthenticated and unencrypted. The system relies entirely on Kubernetes network isolation. In a production environment exposed to untrusted networks, gossip injection attacks or unauthorized matchmaking requests would be possible. Adding mutual TLS and API key validation was deferred due to time constraints. For this reason the nginx HTTP gateway is implemented.
+\end{itemize}
