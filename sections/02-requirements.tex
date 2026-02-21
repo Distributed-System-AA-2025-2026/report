@@ -74,7 +74,7 @@ This component is responsible for managing the cluster of hubs, coordinating pee
 
     \item \textbf{Serialization Format}
     \begin{itemize}
-        \item All gossip messages are serialized using \textbf{Protocol Buffers} (protobuf).
+        \item All gossip messages are serialized using \textbf{Protocol Buffers} (protobuf) \cite{protobuf}.
         \item \textit{Justification:} Protobuf provides compact binary encoding (critical for UDP datagrams with size constraints), strong typing via \texttt{.proto} schema definitions, and cross-language compatibility for future extensibility.
     \end{itemize}
 
