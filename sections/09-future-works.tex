@@ -38,12 +38,11 @@ Spectators would receive the same state broadcasts as players but would be exclu
 
 \paragraph{Persistent Game History.}
 The \texttt{GameStatePersistence} module currently handles in-memory state snapshots.
-Extending it with a lightweight persistent backend (e.g., SQLite per room, or a shared Redis instance) would enable game replay, player statistics, and leaderboards across sessions.
+Extending it with a lightweight persistent backend (e.g., SQLite per room) would enable game replay, player statistics, and leaderboards across sessions.
 
 \paragraph{Dynamic Map Generation.}
 The current game map is fixed.
 A procedural map generator that varies wall placement, map size, and power-up distribution based on player count would improve replayability.
-The generator could be seeded deterministically to ensure all clients render the same map.
 
 \subsection{General}
 
@@ -53,7 +52,7 @@ We could provide mutual TLS between all components.
 
 \paragraph{Client Reconnection.}
 If a client disconnects during a game (network failure, crash), there is currently no way to rejoin the same room.
-Implementing a session token mechanism --- where the hub assigns a token at matchmaking time and the room accepts reconnections bearing that token within a grace period --- would improve the player experience on unstable networks.
+Implementing a session token mechanism, where the hub assigns a token at matchmaking time and the room accepts reconnections bearing that token within a grace period, would improve the player experience on unstable networks.
 
 \paragraph{Cross-Region Deployment.}
 The current deployment assumes a single Kubernetes cluster.
