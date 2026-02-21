@@ -1,7 +1,33 @@
 \section{Self-evaluation}\label{self-evaluation}
 
 \subsection{Enrico Ferraiolo}
-% TODO
+
+\subsubsection{Role}
+
+My primary responsibility was the design and implementation of the \textbf{Room Server}, the CP-oriented component that maintains authoritative game state and executes the deterministic tick loop. I implemented the game engine and state evolution, the TCP networking layer and protobuf protocol integration, the room server lifecycle and client handling, and the reconnection/state persistence logic.
+
+I also implemented the \textbf{game client}, including matchmaking integration, real-time input handling, ASCII rendering, and resilience features (reconnect loop and server reset handling). The client was designed to be protocol-driven and language-agnostic so that alternative implementations can interoperate as long as they follow the same message schema.
+
+\subsubsection{Strengths}
+
+\begin{itemize}
+  \item \textbf{Robust authoritative engine.} The room server enforces a deterministic tick-based update loop with a clear separation between game logic and networking, ensuring consistent outcomes for all connected clients.
+
+  \item \textbf{Resilient session handling.} State snapshotting and reconnection timeouts allow clients to recover from transient disconnects without corrupting authoritative state, preserving match continuity.
+
+  \item \textbf{Protocol-first client design.} The client adheres strictly to the protobuf protocol, making the interface generic and suitable for reimplementation in other languages or UIs without server changes.
+
+  \item \textbf{Clean runtime user experience.} Real-time input and terminal rendering provide low-latency feedback and a stable gameplay loop.
+\end{itemize}
+
+\subsubsection{Weaknesses}
+
+\begin{itemize}
+  \item \textbf{Limited client presentation.} The terminal UI is intentionally minimal and lacks richer graphics, audio, and accessibility features that would be expected in a production-quality client.
+
+  \item \textbf{Missing authentication and encryption.} The room server trusts client actions and does not implement authentication, encryption, or rate-limiting measures.
+
+\end{itemize}
 
 \subsection{Daniele Romanella}
 
