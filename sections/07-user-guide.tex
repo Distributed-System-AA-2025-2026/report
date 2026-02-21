@@ -2,7 +2,7 @@
 
 \subsection{Starting the Client}
 
-Ensure the Python environment is activated, then launch the client:
+Ensure the Python environment is activated, then launch the client from the project's root directory using the following command:
 
 \begin{verbatim}
 python3 Client.py
@@ -15,7 +15,7 @@ This process is transparent to the user: the client resolves the room address an
 
 Upon connection, the client prompts for a player identifier, as shown in \cref{fig:client-player-id}.
 
-\begin{figure}
+\begin{figure}[H]
     \centering
     \includegraphics[width=0.5\textwidth]{figures/client-player-id.png}
     \caption{The client prompts the user to enter a Player ID.}
@@ -25,7 +25,7 @@ Upon connection, the client prompts for a player identifier, as shown in \cref{f
 After entering a Player ID, the client connects to the assigned room.
 The game map is displayed in an ASCII grid, and the interface shows the current game state along with the number of players needed to start (\cref{fig:client-waiting}).
 
-\begin{figure}
+\begin{figure}[H]
     \centering
     \includegraphics[width=0.5\textwidth]{figures/client-waiting.png}
     \caption{The player has joined the room and is waiting for other players. The map is visible, with the player's character placed on the grid.}
@@ -37,7 +37,7 @@ The game map is displayed in an ASCII grid, and the interface shows the current 
 When a second player joins the room, a countdown timer begins, as shown in \cref{fig:client-countdown}.
 The countdown gives additional players time to join before the game starts.
 
-\begin{figure}
+\begin{figure}[H]
     \centering
     \includegraphics[width=0.5\textwidth]{figures/client-countdown.png}
     \caption{A second player (F) has joined. The countdown to game start is displayed.}
@@ -72,7 +72,7 @@ The \texttt{\#} symbols represent indestructible walls.
 
 When only one player remains, the game ends and the winner is announced (\cref{fig:client-gameover}).
 
-\begin{figure}
+\begin{figure}[H]
     \centering
     \includegraphics[width=0.7\textwidth]{figures/client-gameover.png}
     \caption{The game has ended. The winner is displayed, and the server announces a reset.}
