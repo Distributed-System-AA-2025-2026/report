@@ -32,24 +32,24 @@ pytest tests/unit/hub_server/ --cov=bomberman.hub_server --cov-report=term-missi
 The following table summarizes the test distribution across Hub Server components:
 
 \begin{center}
-  \begin{tabular}{l r l}
-    \textbf{Test File} & \textbf{Tests} & \textbf{Tested Component} \\
-    \hline
-    \texttt{test\_hub\_server.py}           & 50 & HubServer (coordination, gossip handling) \\
-    \texttt{test\_hub\_state.py}            & 39 & HubState (peer list, room registry) \\
-    \texttt{test\_hub\_socket\_handler.py}  & 19 & HubSocketHandler (validation, send) \\
-    \texttt{test\_room\_health\_monitor.py} & 15 & RoomHealthMonitor (HTTP health checks) \\
-    \texttt{test\_hub\_peer.py}             & 11 & HubPeer (value validation) \\
-    \texttt{test\_failure\_detector.py}     & 10 & FailureDetector (timeout logic) \\
-    \texttt{test\_local\_room\_manager.py}  & 10 & LocalRoomManager \\
-    \texttt{test\_room\_manager.py}         &  8 & RoomManagerBase (port allocation, activation) \\
-    \texttt{test\_k8s\_room\_manager.py}    &  8 & K8sRoomManager (K8s-specific logic) \\
-    \texttt{test\_peer\_discovery\_monitor.py} & 8 & PeerDiscoveryMonitor \\
-    \texttt{test\_room.py}                  &  7 & Room (joinability, validation) \\
-    \texttt{test\_server\_reference.py}     &  8 & ServerReference \\
-    \hline
-    \textbf{Total}                          & \textbf{193} & (+ 1 sanity test) \\
-  \end{tabular}
+      \begin{tabular}{l r l}
+            \textbf{Test File}                         & \textbf{Tests} & \textbf{Tested Component}                     \\
+            \hline
+            \texttt{test\_hub\_server.py}              & 50             & HubServer (coordination, gossip handling)     \\
+            \texttt{test\_hub\_state.py}               & 39             & HubState (peer list, room registry)           \\
+            \texttt{test\_hub\_socket\_handler.py}     & 19             & HubSocketHandler (validation, send)           \\
+            \texttt{test\_room\_health\_monitor.py}    & 15             & RoomHealthMonitor (HTTP health checks)        \\
+            \texttt{test\_hub\_peer.py}                & 11             & HubPeer (value validation)                    \\
+            \texttt{test\_failure\_detector.py}        & 10             & FailureDetector (timeout logic)               \\
+            \texttt{test\_local\_room\_manager.py}     & 10             & LocalRoomManager                              \\
+            \texttt{test\_room\_manager.py}            & 8              & RoomManagerBase (port allocation, activation) \\
+            \texttt{test\_k8s\_room\_manager.py}       & 8              & K8sRoomManager (K8s-specific logic)           \\
+            \texttt{test\_peer\_discovery\_monitor.py} & 8              & PeerDiscoveryMonitor                          \\
+            \texttt{test\_room.py}                     & 7              & Room (joinability, validation)                \\
+            \texttt{test\_server\_reference.py}        & 8              & ServerReference                               \\
+            \hline
+            \textbf{Total}                             & \textbf{193}   & (+ 1 sanity test)                             \\
+      \end{tabular}
 \end{center}
 
 \paragraph{Test Categories and Rationale.}
@@ -57,71 +57,196 @@ The following table summarizes the test distribution across Hub Server component
 The tests cover the following categories of business logic, each motivated by specific requirements from \cref{requirements}:
 
 \begin{enumerate}
-  \item \textbf{Hostname Parsing and Initialization} (TestGetHubIndex, TestHubServerCreation -- \textit{Req: Peer Discovery}).
-  Validates that hub index derivation from hostnames works correctly across formats (\texttt{hub-0}, \texttt{hub-0.local}, \texttt{hub-99.svc.cluster.local}), and rejects malformed inputs (whitespace, non-numeric indices, wrong prefixes).
-  Verifies that invalid configuration (zero/negative fanout, missing environment variables) is rejected at startup.
+      \item \textbf{Hostname Parsing and Initialization} (TestGetHubIndex, TestHubServerCreation -- \textit{Req: Peer Discovery}).
+            Validates that hub index derivation from hostnames works correctly across formats (\texttt{hub-0}, \texttt{hub-0.local}, \texttt{hub-99.svc.cluster.local}), and rejects malformed inputs (whitespace, non-numeric indices, wrong prefixes).
+            Verifies that invalid configuration (zero/negative fanout, missing environment variables) is rejected at startup.
 
-  \item \textbf{Gossip Message Processing Pipeline} (TestHubServerOnGossipMessage, TestHubServerMessageProcessing -- \textit{Req: Gossip-Based State Synchronization}).
-  Tests the full receive pipeline: duplicate detection via nonce comparison, heartbeat update, payload dispatch to the correct handler, and message forwarding.
-  Verifies that stale messages (nonce $\leq$ stored heartbeat) are silently discarded.
-  Covers all 9 event types through the dispatch mechanism.
+      \item \textbf{Gossip Message Processing Pipeline} (TestHubServerOnGossipMessage, TestHubServerMessageProcessing -- \textit{Req: Gossip-Based State Synchronization}).
+            Tests the full receive pipeline: duplicate detection via nonce comparison, heartbeat update, payload dispatch to the correct handler, and message forwarding.
+            Verifies that stale messages (nonce $\leq$ stored heartbeat) are silently discarded.
+            Covers all 9 event types through the dispatch mechanism.
 
-  \item \textbf{Peer Lifecycle Handlers} (TestHubServerMessageProcessing -- \textit{Req: Peer Discovery, Failure Detection}).
-  Validates each peer event handler in isolation:
-  \texttt{PEER\_JOIN} creates a new peer in state;
-  \texttt{PEER\_LEAVE} marks the peer as dead;
-  \texttt{PEER\_ALIVE} resets a suspected peer to alive;
-  \texttt{PEER\_SUSPICIOUS} triggers an alive broadcast only when the local hub is the suspected one;
-  \texttt{PEER\_DEAD} removes a peer only if it was already suspected (trusting the local failure detector over remote declarations for alive peers).
+      \item \textbf{Peer Lifecycle Handlers} (TestHubServerMessageProcessing -- \textit{Req: Peer Discovery, Failure Detection}).
+            Validates each peer event handler in isolation:
+            \texttt{PEER\_JOIN} creates a new peer in state;
+            \texttt{PEER\_LEAVE} marks the peer as dead;
+            \texttt{PEER\_ALIVE} resets a suspected peer to alive;
+            \texttt{PEER\_SUSPICIOUS} triggers an alive broadcast only when the local hub is the suspected one;
+            \texttt{PEER\_DEAD} removes a peer only if it was already suspected (trusting the local failure detector over remote declarations for alive peers).
 
-  \item \textbf{Failure Detection Logic} (TestFailureDetectorCheckPeers -- \textit{Req: Failure Detection}).
-  Tests the two-phase timeout state machine with controlled time mocking:
-  alive peers within \texttt{SUSPECT\_TIMEOUT} remain unchanged;
-  alive peers past \texttt{SUSPECT\_TIMEOUT} transition to suspected;
-  suspected peers past \texttt{DEAD\_TIMEOUT} transition to dead;
-  alive peers past \texttt{DEAD\_TIMEOUT} skip suspected and go directly to dead;
-  dead peers are ignored (no further transitions).
-  Self-exclusion is verified (a hub never suspects itself).
+      \item \textbf{Failure Detection Logic} (TestFailureDetectorCheckPeers -- \textit{Req: Failure Detection}).
+            Tests the two-phase timeout state machine with controlled time mocking:
+            alive peers within \texttt{SUSPECT\_TIMEOUT} remain unchanged;
+            alive peers past \texttt{SUSPECT\_TIMEOUT} transition to suspected;
+            suspected peers past \texttt{DEAD\_TIMEOUT} transition to dead;
+            alive peers past \texttt{DEAD\_TIMEOUT} skip suspected and go directly to dead;
+            dead peers are ignored (no further transitions).
+            Self-exclusion is verified (a hub never suspects itself).
 
-  \item \textbf{Room Lifecycle Management} (TestHubServerMessageProcessing, TestHubServerGetOrActivateRoom, TestHubServerBroadcasts -- \textit{Req: Room Lifecycle Management, Client Matchmaking}).
-  Verifies the full room lifecycle through gossip:
-  \texttt{ROOM\_ACTIVATED} adds a remote room to local state;
-  \texttt{ROOM\_STARTED} transitions to PLAYING;
-  \texttt{ROOM\_CLOSED} transitions to DORMANT.
-  Tests the matchmaking logic: returns an existing joinable room with incremented player count, activates a new room when none available, returns \texttt{None} when activation fails.
+      \item \textbf{Room Lifecycle Management} (TestHubServerMessageProcessing, TestHubServerGetOrActivateRoom, TestHubServerBroadcasts -- \textit{Req: Room Lifecycle Management, Client Matchmaking}).
+            Verifies the full room lifecycle through gossip:
+            \texttt{ROOM\_ACTIVATED} adds a remote room to local state;
+            \texttt{ROOM\_STARTED} transitions to PLAYING;
+            \texttt{ROOM\_CLOSED} transitions to DORMANT.
+            Tests the matchmaking logic: returns an existing joinable room with incremented player count, activates a new room when none available, returns \texttt{None} when activation fails.
 
-  \item \textbf{Room Health Monitoring} (TestRoomHealthMonitorIsRoomHealthy, TestRoomHealthMonitorCheckAllRooms, TestHubServerRoomUnhealthy -- \textit{Req: Failure Detection}).
-  Tests HTTP health check logic: healthy rooms (correct status code + expected status) pass, rooms returning wrong status codes, unexpected statuses, timeouts, or connection errors are flagged as unhealthy.
-  Verifies differentiated handling: local unhealthy rooms transition to PLAYING (with gossip broadcast), remote unhealthy rooms are removed from state.
-  Checks that only ACTIVE rooms with known internal services are health-checked.
+      \item \textbf{Room Health Monitoring} (TestRoomHealthMonitorIsRoomHealthy, TestRoomHealthMonitorCheckAllRooms, TestHubServerRoomUnhealthy -- \textit{Req: Failure Detection}).
+            Tests HTTP health check logic: healthy rooms (correct status code + expected status) pass, rooms returning wrong status codes, unexpected statuses, timeouts, or connection errors are flagged as unhealthy.
+            Verifies differentiated handling: local unhealthy rooms transition to PLAYING (with gossip broadcast), remote unhealthy rooms are removed from state.
+            Checks that only ACTIVE rooms with known internal services are health-checked.
 
-  \item \textbf{State Management} (TestHubStatePeerManagement, TestHubStateHeartbeatCheck, TestHubStateRoomManagement -- \textit{Req: Gossip-Based State Synchronization, Eventual Consistency}).
-  Covers peer list operations (add, remove, get with gaps, exclusion filters), heartbeat check logic (duplicate detection, dead peer resurrection, leave message suppression for already-dead peers), and room registry operations (add, get, status transitions, active room lookup by joinability).
+      \item \textbf{State Management} (TestHubStatePeerManagement, TestHubStateHeartbeatCheck, TestHubStateRoomManagement -- \textit{Req: Gossip-Based State Synchronization, Eventual Consistency}).
+            Covers peer list operations (add, remove, get with gaps, exclusion filters), heartbeat check logic (duplicate detection, dead peer resurrection, leave message suppression for already-dead peers), and room registry operations (add, get, status transitions, active room lookup by joinability).
 
-  \item \textbf{Input Validation and Edge Cases} (TestHubPeer, TestRoom, TestHubSocketHandlerValidation, TestServerReference -- \textit{Req: general robustness}).
-  Validates domain entity invariants: negative indices rejected, invalid status strings rejected, negative heartbeats rejected, negative player counts rejected, player count exceeding max rejected.
-  Socket handler validates callback signature (parameter count, callable check, None check).
-  Room joinability is parametrized across all status/player-count combinations, including boundary conditions (exactly full, zero max players).
+      \item \textbf{Input Validation and Edge Cases} (TestHubPeer, TestRoom, TestHubSocketHandlerValidation, TestServerReference -- \textit{Req: general robustness}).
+            Validates domain entity invariants: negative indices rejected, invalid status strings rejected, negative heartbeats rejected, negative player counts rejected, player count exceeding max rejected.
+            Socket handler validates callback signature (parameter count, callable check, None check).
+            Room joinability is parametrized across all status/player-count combinations, including boundary conditions (exactly full, zero max players).
 
-  \item \textbf{Peer Discovery} (TestHubServerDiscoveryPeers, TestPeerDiscoveryMonitor -- \textit{Req: Peer Discovery and Membership}).
-  Verifies discovery behavior per mode: manual mode hub-0 does not send (it is the bootstrap node), non-zero hubs in manual mode send to a random peer, K8s mode sends with DNS-based addressing.
-  PeerDiscoveryMonitor triggers callback when alive peer count is below fanout.
+      \item \textbf{Peer Discovery} (TestHubServerDiscoveryPeers, TestPeerDiscoveryMonitor -- \textit{Req: Peer Discovery and Membership}).
+            Verifies discovery behavior per mode: manual mode hub-0 does not send (it is the bootstrap node), non-zero hubs in manual mode send to a random peer, K8s mode sends with DNS-based addressing.
+            PeerDiscoveryMonitor triggers callback when alive peer count is below fanout.
 
-  \item \textbf{Message Forwarding} (TestHubServerForwardAndDiscovery -- \textit{Req: Gossip-Based State Synchronization}).
-  Verifies that forwarded messages have the \texttt{forwarded\_by} field updated to the current hub's index.
-  Tests server reference calculation for both manual (localhost + port offset) and K8s (DNS-based) modes.
+      \item \textbf{Message Forwarding} (TestHubServerForwardAndDiscovery -- \textit{Req: Gossip-Based State Synchronization}).
+            Verifies that forwarded messages have the \texttt{forwarded\_by} field updated to the current hub's index.
+            Tests server reference calculation for both manual (localhost + port offset) and K8s (DNS-based) modes.
 \end{enumerate}
 
 \paragraph{Bug Discovery.}
 The testing process identified several bugs in the initial implementation, which were subsequently fixed:
 \begin{itemize}
-  \item Peer equality comparison in \texttt{ServerReference} used \texttt{other.\_\_class\_\_ != ServerReference} instead of \texttt{isinstance}, breaking subclass comparisons.
-  \item \texttt{execute\_heartbeat\_check} did not update \texttt{last\_seen} when resurrecting a dead peer, causing the failure detector to immediately re-suspect the returned peer.
-  \item Room status validation allowed constructing a Room with \texttt{player\_count > max\_players} if the count was set after construction via the setter (the check only ran in \texttt{\_\_init\_\_}).
+      \item Peer equality comparison in \texttt{ServerReference} used \texttt{other.\_\_class\_\_ != ServerReference} instead of \texttt{isinstance}, breaking subclass comparisons.
+      \item \texttt{execute\_heartbeat\_check} did not update \texttt{last\_seen} when resurrecting a dead peer, causing the failure detector to immediately re-suspect the returned peer.
+      \item Room status validation allowed constructing a Room with \texttt{player\_count > max\_players} if the count was set after construction via the setter (the check only ran in \texttt{\_\_init\_\_}).
 \end{itemize}
 
 \subsubsection{Room Server}
-% TODO
+
+\paragraph{Testing Strategy.}
+The Room Server is validated through a comprehensive unit test suite comprising \textbf{149 test methods} across 6 test files.
+Given the authoritative nature of the Room Server, the testing strategy focuses heavily on \textbf{Deterministic State Transitions} and \textbf{Crash Recovery Scenarios}.
+Every test verifies observable state changes, fault tolerance behavior, or network protocol correctness, rather than internal implementation details.
+
+All tests use \texttt{pytest} as the test runner, with \texttt{unittest.mock} for dependency isolation.
+Infrastructure components (TCP sockets, file I/O, threading, HTTP clients) are mocked at the boundary, allowing tests to exercise full business logic without external dependencies.
+This isolation strategy enables simulation of complex failure scenarios: network partitions during client broadcasts, disk failures during autosave, corrupted persistence files, and simultaneous player disconnections.
+
+The test suite emphasizes corner case coverage: crash recovery with stale save files, reconnection timeout enforcement, partial network failures, cross-platform input handling, and collision edge cases (bomb stacking, simultaneous explosions, illegal movement).
+
+\paragraph{How to Run.}
+From the project root:
+\begin{verbatim}
+pytest tests/unit/room_server/ -v
+\end{verbatim}
+Coverage can be measured with:
+\begin{verbatim}
+pytest tests/unit/room_server/ --cov=bomberman.room_server
+\end{verbatim}
+
+\paragraph{Test Breakdown by Component.}
+
+The following table summarizes the test distribution across Room Server components:
+
+\begin{center}
+      \begin{tabular}{l r l}
+            \textbf{Test File}                         & \textbf{Tests} & \textbf{Tested Component}                           \\
+            \hline
+            \texttt{test\_room\_server.py}             & 54             & RoomServer (lifecycle, concurrency, API)            \\
+            \texttt{test\_game\_engine.py}             & 52             & GameEngine (engine mechanics, rules, state machine) \\
+            \texttt{test\_game\_input\_helper.py}      & 18             & InputHelper (cross-platform CLI input)              \\
+            \texttt{test\_mock\_client.py}             & 13             & Client (connection, reconnection logic)             \\
+            \texttt{test\_game\_state\_persistence.py} & 8              & Persistence (pickle serialization, disk I/O)        \\
+            \texttt{test\_network\_utils.py}           & 4              & NetworkUtils (framing, TCP buffering)               \\
+            \hline
+            \textbf{Total}                             & \textbf{149}   &                                                     \\
+      \end{tabular}
+\end{center}
+
+\paragraph{Test Categories and Rationale.}
+
+The tests cover the following categories of business logic:
+
+\begin{enumerate}
+      \item \textbf{Server Initialization and Crash Recovery} (TestRoomServerInitialization -- \textit{Req: Fault Tolerance, State Persistence}).
+            Validates server bootstrapping in both fresh-start and crash-recovery scenarios.
+            Tests verify environment variable validation, socket configuration, and global initialization.
+            Critical crash recovery logic is tested: loading persistent state distinguishes alive vs.\ dead players, setting reconnection deadlinet, and rejecting stale saves older than \texttt{SERVER\_RECONNECTION\_TIMEOUT}.
+
+      \item \textbf{Server Lifecycle and Threading Model} (TestRoomServerLifecycle -- \textit{Req: Real-time Responsiveness, Concurrency}).
+            Tests the multi-threaded architecture: main thread accepts client connections in a loop, API thread runs FastAPI/uvicorn server for \texttt{/status} endpoint, game loop thread executes tick-based actions at fixed frequency, and per-client handler threads process incoming actions and manage disconnections.
+            Shutdown logic is validated: active games trigger autosave before exit, completed games delete save files to prevent resurrection, all client sockets are closed gracefully, and socket close errors are handled without crashing.
+
+      \item \textbf{Game Restart and Reset} (TestGameRestart -- \textit{Req: Availability (best effort), State Management}).
+            Validates the post-game-over restart sequence: all connected clients receive \texttt{SERVER\_RESET} notification, clients are disconnected after a brief delay, a new \texttt{GameEngine} is created with random seed, autosave counter and timestamps are reset.
+            Tests confirm that network errors during notification do not prevent restart completion.
+
+      \item \textbf{Game Loop Timing and Autosave} (TestGameLoop -- \textit{Req: Real-time Responsiveness, Fault Tolerance}).
+            Tests the main game ticker with controlled time mocking: action queue is drained and passed to \texttt{engine.tick()} before physics updates, game state is persisted every 5 ticks (AUTOSAVE\_INTERVAL) when state is IN\_PROGRESS, no autosave occurs before interval threshold (premature save prevention), and broadcasts occur every tick regardless of autosave status.
+            Reconnection timeout logic is validated: if \texttt{reconnection\_deadline} expires while \texttt{expected\_players} is non-empty, the server triggers restart (abandoning partial reconnections); deadline is cleared when all expected players successfully reconnect; deadline is only set during resumed game initialization.
+            Game over sequence timing is verified: 5-second delay before automatic restart, ensuring players see final state.
+
+      \item \textbf{Client Connection Management} (TestClientHandling -- \textit{Req: Client Session Management, Input Processing}).
+            Validates the full client lifecycle: new player join during the waiting phase, calls \texttt{engine.add\_player()}, sends success response, and stores client socket; player reconnection during resumed game verifies player is in \texttt{expected\_players} set, removes player from set, sends current game snapshot; new join attempts during IN\_PROGRESS phase are rejected with failure response; QUIT action removes client from active clients dict and calls \texttt{engine.remove\_player()}.
+            Action queueing is tested: movement and bomb actions are queued for next tick processing, invalid actions are ignored.
+            Disconnect handling is validated: broken pipe or empty recv marks player as dead via \texttt{engine.kill\_player()}, triggers \texttt{check\_game\_over()} to detect last-survivor scenario, and removes client from active set.
+            Exception handling is verified: engine errors (room full, duplicate player) send failure response and close connection.
+
+      \item \textbf{State Broadcasting} (TestBroadcasting -- \textit{Req: State Synchronization, Multiplayer Consistency}).
+            Tests the snapshot distribution mechanism: every tick, all clients receive a Protobuf packet containing ASCII grid representation, \texttt{is\_game\_over} flag, and reconnection countdown message (if applicable).
+            Partial failure handling is verified: if sending to one client fails, the broadcast continues to remaining clients.
+
+      \item \textbf{Protocol Translation and Action Mapping} (TestActionMapping -- \textit{Req: Input Processing, Protocol Correctness}).
+            Validates the Protobuf-to-engine translation layer: map each client's input to an action; invalid or unknown action types return None instead of crashing.
+
+      \item \textbf{Hub Integration and Lifecycle Notifications} (TestHubNotifications -- \textit{Req: Two-Tier Architecture, Matchmaking Coordination}).
+            Validates the room-to-hub notification protocol: check that game transitions triggers different requests being sent sent to the Hub.
+            Network resilience is tested: HTTP timeouts, connection refused errors, and non-200 status codes are caught and logged without crashing game loop.
+            Tests use \texttt{requests.post} mocking with configurable status codes and exception injection to simulate hub failures.
+
+      \item \textbf{Game Engine Physics and Collision Detection} (TestMovement, TestBombMechanics -- \textit{Req: Game Engine Rules}).
+            Movement collision detection: players cannot move into wall tiles, movement out of grid bounds is rejected, dead players cannot move.
+            Bomb mechanics: players can place exactly one bomb at a time, bomb timer decrements each tick until reaching zero, explosion propagates in four cardinal directions until hitting unbreakable wall, breakable walls stop propagation but are destroyed, players in explosion range are killed instantly, bomb placement on same position is prevented.
+            Edge cases: players can walk over bombs (bombs don't block movement), dead players cannot place bombs, and attempting to place bomb for nonexistent player raises ValueError.
+
+      \item \textbf{Game State Machine and Win Conditions} (TestGameStateTransitions, TestTickSystem -- \textit{Req: Match Lifecycle}).
+            Validates the three-state Finite State Machine: initial state is WAITING\_FOR\_PLAYERS, \texttt{start\_game()} transitions to IN\_PROGRESS, and game ends in GAME\_OVER when win condition met.
+            Win condition logic: exactly one alive player declares that player as winner; zero alive players results in draw; two or more alive players keeps game running.
+            Countdown system (while in WAITING\_FOR\_PLAYERS): requires at least players to start countdown, timer decrements each tick, and game auto-starts when countdown reaches zero.
+            Tick processing: tick counter increments during IN\_PROGRESS, tick stops when GAME\_OVER, and multiple actions are processed in a single tick.
+
+      \item \textbf{State Persistence and Corruption Handling} (TestGameStatePersistence -- \textit{Req: Fault Tolerance, Crash Recovery}).
+            Validates serialization: save format includes timestamp and full engine object; load operation validates timestamp is within the server reconnection timeout; stale saves (older than timeout) are rejected and treated as obsolete.
+            Error handling: disk full or permission errors during save return False without crashing; corrupted data during load, and missing save file trigger fresh start; deletion errors handling.
+
+      \item \textbf{Network Protocol and Framing} (TestNetworkUtils -- \textit{Req: Protocol Correctness}).
+            Validates the length-prefixed message protocol: \texttt{send\_msg} prepends 4-byte big-endian length header; \texttt{recv\_msg} reads 4-byte header, then reads exact message length; partial header, and connection closed gracefully return None.
+
+      \item \textbf{Client Reconnection Logic} (TestMockClient -- \textit{Req: Connection Resilience, Sessions}).
+            Tests client-side reconnection behavior: successful handshake stores tick\_rate and sets client connection state; server rejection sets the connection state to False; SERVER\_RESET message sets \texttt{server\_reset\_detected} flag and stops reconnection attempts; reconnection window; reconnection attempts occur every RECONNECT\_INTERVAL seconds; timeout expiration sets \texttt{running=False}.
+            Network error handling: errors during send and recv are handled gracefully without crashing.
+            Tests verify snapshot packets trigger render calls and connection state updates.
+            TestMockClient also validates the Client class, as it uses the same codebase.
+
+      \item \textbf{Cross-Platform Input Handling} (TestGetch, TestRealTimeInput -- \textit{Req: Platform Portability, User Input}).
+            Validates dual-platform keyboard input: Windows and Unix-based systems requires diffrent setups and/or different approches to gracefully handle the in-game keyboard input.
+            Timeout logic, buffer flushing are also tested to ensure that the input system does not block the game loop and remains responsive.
+
+      \item \textbf{Edge Cases and Corner Conditions} (TestEdgeCases).
+            Player removal protection: cannot remove player during IN\_PROGRESS; spawn point freed only during WAITING\_FOR\_PLAYERS.
+            Bomb collision edge cases: multiple bombs on same position prevented.
+            Grid boundary validation: movement to invalid coordinates rejected.
+            Simultaneous player deaths: all players killed by same explosion results in draw.
+            Reconnection race conditions: player reconnects before deadline clears expected set; all players reconnect clears deadline immediately; partial reconnection before timeout triggers restart.
+            Network error during broadcast: one client failure doesn't prevent others from receiving snapshot.
+            Invalid action robustness: unknown Protobuf action types return None without exception.
+\end{enumerate}
+
+\paragraph{Bug Discovery.}
+The testing process identified several edge cases and design decisions in the initial implementation:
+\begin{itemize}
+      \item Bomb placement is limited by position rather than strictly per-player: if two players occupy the same tile, only the first can place a bomb at that location.
+      \item Player removal is only allowed during WAITING\_FOR\_PLAYERS state; attempting removal during IN\_PROGRESS raises ValueError to preserve game integrity. This is useful for player reconnections.
+\end{itemize}
 
 \subsection{Acceptance Testing}\label{acceptance-test}
 
@@ -130,29 +255,53 @@ The testing process identified several bugs in the initial implementation, which
 Manual acceptance testing was performed for scenarios that are difficult or impractical to fully automate in unit tests:
 
 \begin{enumerate}
-  \item \textbf{Multi-Hub Gossip Convergence.}
-  Three hub instances were started locally in manual mode.
-  A room was activated on hub-0, and the \texttt{/debug/} endpoint on hub-1 and hub-2 was inspected to verify that the \texttt{ROOM\_ACTIVATED} event propagated correctly.
-  Player joins were triggered via \texttt{/matchmaking} on different hubs and convergence of player counts was observed.
-  \textit{Why not automated:} requires multiple concurrent processes with real UDP networking; integration test infrastructure was not implemented within the project timeline.
+      \item \textbf{Multi-Hub Gossip Convergence.}
+            Three hub instances were started locally in manual mode.
+            A room was activated on hub-0, and the \texttt{/debug/} endpoint on hub-1 and hub-2 was inspected to verify that the \texttt{ROOM\_ACTIVATED} event propagated correctly.
+            Player joins were triggered via \texttt{/matchmaking} on different hubs and convergence of player counts was observed.
+            \textit{Why not automated:} requires multiple concurrent processes with real UDP networking; integration test infrastructure was not implemented within the project timeline.
 
-  \item \textbf{Failure Detection and Recovery.}
-  A hub instance was started, then killed (SIGKILL) to simulate a crash.
-  The remaining hubs were monitored via \texttt{/debug/} to verify that the killed hub transitioned from alive $\rightarrow$ suspected $\rightarrow$ dead within the expected timeout windows.
-  The killed hub was restarted, and its reintegration into the cluster (via \texttt{PEER\_JOIN} and heartbeat resurrection) was verified.
-  \textit{Why not automated:} requires process-level control and real timing; unit tests cover the logic with mocked time, but the end-to-end timing behavior needed manual verification.
+      \item \textbf{Failure Detection and Recovery.}
+            A hub instance was started, then killed (SIGKILL) to simulate a crash.
+            The remaining hubs were monitored via \texttt{/debug/} to verify that the killed hub transitioned from alive $\rightarrow$ suspected $\rightarrow$ dead within the expected timeout windows.
+            The killed hub was restarted, and its reintegration into the cluster (via \texttt{PEER\_JOIN} and heartbeat resurrection) was verified.
+            \textit{Why not automated:} requires process-level control and real timing; unit tests cover the logic with mocked time, but the end-to-end timing behavior needed manual verification.
 
-  \item \textbf{Kubernetes Deployment.}
-  The full system was deployed as a StatefulSet on a local Kubernetes cluster (Minikube).
-  Hub discovery via DNS, room pod creation via the Kubernetes API, NodePort service creation, and room health monitoring were verified by inspecting pod logs and the \texttt{/debug/} endpoint.
-  \textit{Why not automated:} requires a running Kubernetes cluster with specific configuration (namespace, RBAC, images); this constitutes an environment-level integration test that exceeds the scope of the automated test suite.
+      \item \textbf{Kubernetes Deployment.}
+            The full system was deployed as a StatefulSet on a local Kubernetes cluster (Minikube).
+            Hub discovery via DNS, room pod creation via the Kubernetes API, NodePort service creation, and room health monitoring were verified by inspecting pod logs and the \texttt{/debug/} endpoint.
+            \textit{Why not automated:} requires a running Kubernetes cluster with specific configuration (namespace, RBAC, images); this constitutes an environment-level integration test that exceeds the scope of the automated test suite.
 
-  \item \textbf{Client Matchmaking End-to-End.}
-  A client sent a \texttt{POST /matchmaking} request to the hub.
-  The returned room address and port were used to establish a TCP connection to the Room Server.
-  Game start and close callbacks (\texttt{/room/\{id\}/start}, \texttt{/room/\{id\}/close}) were triggered, and the gossip propagation of the corresponding events was verified on other hubs.
-  \textit{Why not automated:} requires the full stack (hub + room + client) running simultaneously; this is an end-to-end test that crosses component boundaries.
+      \item \textbf{Client Matchmaking End-to-End.}
+            A client sent a \texttt{POST /matchmaking} request to the hub.
+            The returned room address and port were used to establish a TCP connection to the Room Server.
+            Game start and close callbacks (\texttt{/room/\{id\}/start}, \texttt{/room/\{id\}/close}) were triggered, and the gossip propagation of the corresponding events was verified on other hubs.
+            \textit{Why not automated:} requires the full stack (hub + room + client) running simultaneously; this is an end-to-end test that crosses component boundaries.
 \end{enumerate}
 
 \subsubsection{Room Server}
-% TODO
+Manual acceptance testing was performed to validate the real-time aspects and "feel" of the game:
+
+\begin{enumerate}
+      \item \textbf{Gameplay Fluidity (Offline and Online).}
+            \textit{Scenario:} Four clients connected to a single Room Server.
+            \textit{Test:} All players moved simultaneously while spamming actions.
+            \textit{Outcome:} Confirmed that the server's input queue handled concurrent requests without dropping commands, and the authoritative state remained consistent for all clients.
+
+      \item \textbf{Room Server Crash Recovery.}
+            \textit{Scenario:} During an active match, the Room Server process was manually terminated.
+            \textit{Test:} The server was restarted immediately.
+            \textit{Outcome:} The server detected the saved checkpoint, restored the engine object, and accepted client reconnections.
+            Players could resume the match from the exact tick where it crashed.
+
+      \item \textbf{Room Server Reconnection Timeout.}
+            \textit{Scenario:} A server crashed and was left offline for 60 seconds.
+            \textit{Test:} The server was restarted.
+            \textit{Outcome:} The server correctly discarded the stale save file and started a fresh lobby (\texttt{WAITING\_FOR\_PLAYERS}) instead of resuming the old game.
+
+      \item \textbf{Client Disconnection Handling.}
+            \textit{Scenario:} A player disconnected non-intentionally their client terminal mid-game.
+            \textit{Outcome:} The server detected the disconnection, waited for the reconnection window, and if the player did not reconnect within the timeout, it marked the player as dead and continued the game.
+
+
+\end{enumerate}

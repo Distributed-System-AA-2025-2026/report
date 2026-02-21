@@ -1,0 +1,16 @@
+\begin{abstract}
+    Up to $\sim$2000 characters briefly describing the project.
+\end{abstract}
+
+\section*{Abstract}\label{abstract}
+
+We present a distributed, real-time Bomberman system designed for multi-player gameplay with scalability and fault tolerance. 
+The architecture is split into two tiers: a hub layer responsible for matchmaking and cluster coordination, and a room layer that executes the authoritative game loop. 
+The hub server adopts an AP-oriented design, using UDP-based gossip to disseminate room availability and peer liveness without centralized coordination.
+The room server is CP-oriented, running a deterministic tick loop over a TCP and Protocol Buffers protocol to ensure consistent state across clients. 
+The client is protocol-driven and renders the game as an ASCII interface.
+
+The system supports transient failure handling through bounded reconnection windows and state snapshotting, keeping matches stable under brief network interruptions. 
+A Kubernetes-based deployment is supported for hub scalability and room provisioning, with containerized services and a clear separation of responsibilities between components. 
+The result is a coherent distributed design that balances availability with strong consistency at the game engine.
+\newpage
