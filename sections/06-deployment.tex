@@ -156,4 +156,4 @@ Concretely, the Room Server deployment is embedded in the Hub Server deployment:
 
 The Room image is pre-loaded into the MicroK8s container runtime with \texttt{imagePullPolicy: Never}, so pod creation does not require pulling from a remote registry. This reduces room activation latency to the time needed for pod scheduling and container startup.
 
-No separate Kubernetes manifests (StatefulSet, Deployment) are needed for room pods — they are created imperatively by the Hub via the Kubernetes API, labeled with \texttt{app=room}, \texttt{room-id}, and \texttt{owner-hub} for identification and recovery after hub restarts.
+No separate Kubernetes manifests (StatefulSet, Deployment) are needed for room pods: they are created imperatively by the Hub via the Kubernetes API, labeled with \texttt{app=room}, \texttt{room-id}, and \texttt{owner-hub} for identification and recovery after hub restarts.
