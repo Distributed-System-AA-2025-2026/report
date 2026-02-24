@@ -1,6 +1,5 @@
 \section{Design}\label{design}
 
-This chapter explains the strategies used to meet the requirements identified in the analysis.
 
 \subsection{Architecture}\label{architecture}
 
@@ -11,7 +10,7 @@ No hub acts as a coordinator or leader: every instance maintains its own local c
 
 This choice is motivated by the AP orientation identified in the requirements.
 A leader-based architecture (e.g., Raft, Paxos) would provide strong consistency but would sacrifice availability during leader elections or network partitions.
-Since the Hub's primary role is matchmaking (returning a joinable room to clients), temporary inconsistencies between hubs (e.g., two hubs briefly disagreeing on a room's player count) are tolerable and self-correcting via gossip convergence.
+Since the Hub's primary role is matchmaking (returning a joinable room to clients), temporary inconsistencies between hubs are tolerable and self-correcting via gossip convergence or system evolving.
 
 The client-facing layer uses a standard \textbf{request-response} pattern over HTTP (via FastAPI), decoupled from the internal gossip communication.
 This separates the concerns of client interaction (synchronous, HTTP) from cluster coordination (asynchronous, UDP gossip).
@@ -28,59 +27,25 @@ An authoritative server ensures a single source of truth, preventing desynchroni
 
 \subsection{Infrastructure}\label{infrastructure}
 
-\subsubsection{Hub Server}
-
 The infrastructure comprises the following components:
 
 \paragraph{Hub Instances.}
 Each hub runs as a Kubernetes \texttt{StatefulSet} pod.
-The StatefulSet guarantees stable hostnames (e.g., \texttt{hub-0...}, \texttt{hub-1...}), which are used to derive the hub index and to construct DNS-based \texttt{ServerReference}\footnote{A class that is used to encapsule Server ip and port.} addresses for gossip communication.
-Each hub pod exposes two network interfaces:
-\begin{itemize}
-  \item \textbf{HTTP API} (port 8000, via FastAPI/Uvicorn): serves client matchmaking requests, room lifecycle callbacks from Room Servers (\texttt{/room/\{id\}/start}, \texttt{/room/\{id\}/close}), health/readiness probes, and a debug endpoint.
-  \item \textbf{UDP gossip socket} (configurable via \texttt{GOSSIP\_PORT}\footnote{Port 9000 is used in this project}): used for peer-to-peer gossip protocol communication, bound to \texttt{0.0.0.0} to accept messages from any peer.
-\end{itemize}
+The StatefulSet guarantees stable hostnames.
+Each hub pod exposes two network interfaces: HTTP API and UDP Gossip socket.
 
 \paragraph{Room Instances.}
-Each Room Server runs as an independent Kubernetes pod, created and managed by the hub's \texttt{RoomManager}.
-Room pods are exposed via \texttt{NodePort} services, allowing external clients to connect directly to the game server.
-An internal \texttt{ClusterIP} service is also created for each room, used by the \texttt{RoomHealthMonitor} to perform HTTP health checks on port 8080.
+Each Room Server runs as an independently from HubServer.
+Room Servers comes from a Game Port (TCP) where the players connect to the game and a HTTP port that is used from HubServers for health checks.
 
-\paragraph{Service Discovery.}
-Components discover each other through two mechanisms depending on the deployment mode:
-\begin{itemize}
-  \item \textbf{Manual mode}: peers are addressed on \texttt{127.0.0.1} with port-based indexing (\texttt{9000 + peer\_index}). Suitable for local development and testing, please note that without this mode the project it's deployable in local without k8s.
-  \item \textbf{Kubernetes mode}: peers are addressed via DNS using the pattern \texttt{hub-\{index\}.hub-service.bomberman.svc.cluster.local}, resolved by the Kubernetes DNS service. The \texttt{HUB\_SERVICE\_NAME} and \texttt{K8S\_NAMESPACE} environment variables configure this resolution.
-\end{itemize}
+An overview of room is shown in \cref{fig:room-overview}
 
-Room Servers are discovered by the hub via the Kubernetes API (\texttt{CoreV1Api}), which is also used to create, delete, and inspect room pods and services.
-
-\paragraph{Network Topology.}
-All components run within the same Kubernetes cluster (same network namespace).
-Hub-to-hub gossip uses UDP within the cluster network.
-Client-to-hub communication enters through an external ingress.
-Client-to-room communication uses NodePort services, exposing game traffic directly on cluster node ports.
-
-\subsubsection{Room Server}
-
-The infrastructure for the Room tier consists of dynamically provisioned compute units:
-
-\paragraph{Room Instances.}
-Each Room Server is a self-contained process. In the Kubernetes deployment mode, it runs as an independent \texttt{Pod} spawned dynamically by the Hub Server's \texttt{RoomManager}. 
-Each Room Pod is isolated, meaning the computational load of one match does not impact others.
-
-\paragraph{Network Interfaces.}
-Each Room Server exposes two distinct network interfaces:
-\begin{itemize}
-  \item \textbf{Game Port (TCP):} A socket bound to an IP address, exposed externally via a Kubernetes \texttt{NodePort} Service. 
-  This allows external game clients to bypass the Hub tier and establish persistent, TCP connections directly to the node hosting the Room Server.
-  \item \textbf{Management API (HTTP):} An internal HTTP server exposed via a \texttt{ClusterIP} service. 
-  This is used exclusively by the Hub Server for lifecycle management and health monitoring (\texttt{GET /status}).
-\end{itemize}
-
-\paragraph{Discovery.}
-Clients discover the Room Server via the Hub: the matchmaking response provides the exact external IP and \texttt{NodePort} to connect to. 
-The Hub discovers the Room Server's internal IP via the Kubernetes API upon Pod creation.
+\begin{figure}
+    \centering
+    \includegraphics[width=0.9\textwidth]{figures/room-overview.png}
+    \caption{Room Server internal architecture.}
+    \label{fig:room-overview}
+\end{figure}
 
 \subsection{Modelling}\label{modelling}
 
@@ -97,6 +62,14 @@ The Hub discovers the Room Server's internal IP via the Kubernetes API upon Pod 
   \item \textbf{GossipMessage}: the protocol envelope for all inter-hub communication. Each message carries a \texttt{nonce} (monotonic per origin), \texttt{origin} and \texttt{forwarded\_by} indices, a \texttt{timestamp}, an \texttt{event\_type} discriminator, and exactly one \texttt{oneof payload} matching the event type. Defined as a Protocol Buffers message.
   \item \textbf{Event Payloads}: a set of value objects, one per event type, carrying event-specific data. Examples include \texttt{RoomActivatedPayload} (room\_id, owner\_hub, external\_port, external\_address), \texttt{PeerJoinPayload} (joining\_peer index), and \texttt{RoomPlayerJoined} (room\_id). Each payload is a Protocol Buffers message nested within the \texttt{GossipMessage} envelope.
 \end{itemize}
+
+The Room lifecycle is shown in figure \cref{fig:design-hub-pov-room-lifecycle}
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\textwidth]{figures/hub-pov-room-lifecycle}
+    \caption{Room lifecycle}
+    \label{fig:design-hub-pov-room-lifecycle}
+\end{figure}
 
 \paragraph{Domain Events.}
 
@@ -159,7 +132,14 @@ The client sends a \texttt{POST /matchmaking} request.
 The hub consults its local \texttt{HubState} for a joinable room (status \texttt{ACTIVE}, \texttt{player\_count < max\_players}).
 If found, the hub increments the player count, broadcasts a \texttt{ROOM\_PLAYER\_JOINED} gossip message, and returns the room's address and port.
 If no joinable room exists, the hub asks its \texttt{RoomManager} to activate a dormant room (or create a new one in K8s mode); upon success, it broadcasts \texttt{ROOM\_ACTIVATED} and returns the new room's details.
-If activation fails, the hub returns HTTP 503.
+If activation fails, the hub returns HTTP 503. The interaction between client and hub is shown in figure \ref{fig:client-hub-interaction}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.7\textwidth]{figures/hub-http-high-level.png}
+  \caption{Client interaction with the Hub cluster. Clients connect to a single entry point without knowledge of which hub instance serves their request.}
+  \label{fig:client-hub-interaction}
+\end{figure}
 
 \paragraph{Room $\rightarrow$ Hub (HTTP callbacks).}
 The Room Server notifies the hub of lifecycle transitions:
@@ -177,6 +157,14 @@ When a hub receives a gossip message via \texttt{HubSocketHandler}, the followin
   \item \textbf{Process payload}: the event-specific handler is invoked (e.g., \texttt{\_handle\_room\_activated} adds a room to local state).
   \item \textbf{Forward}: the message is forwarded to a random subset of alive peers (bounded by \texttt{HUB\_FANOUT}), with the \texttt{forwarded\_by} field updated to the current hub's index.
 \end{enumerate}
+
+Full logic is shown in figure \cref{fig:gossip-pipeline}
+\begin{figure}
+    \centering
+    \includegraphics[width=1\textwidth]{figures/hub-server-gossip-interaction}
+    \caption{Gossip message processing pipeline. The forwarder is marked alive regardless of whether the message is a duplicate, providing implicit heartbeating.}
+    \label{fig:gossip-pipeline}
+\end{figure}
 
 \paragraph{Hub $\rightarrow$ Room (Health Check).}
 The \texttt{RoomHealthMonitor} periodically sends \texttt{GET /status} HTTP requests to each \texttt{ACTIVE} room's internal service.
@@ -242,9 +230,7 @@ When a room fails the health check, the behavior depends on ownership: local roo
 
 \paragraph{HubSocketHandler (Stateless, Active).}
 Manages the UDP socket.
-The listener thread spawns a new thread for each received datagram (to avoid blocking the receive loop during message processing).
-Message parsing (protobuf deserialization) and callback invocation happen in the handler thread.
-Send operations are fire-and-forget: errors (DNS resolution failure, socket errors) are logged but do not propagate.
+The listener thread dispatches each received datagram to a bounded thread pool (\texttt{ThreadPoolExecutor}) to avoid blocking the receive loop while bounding concurrency.
 
 \subsubsection{Room Server}
 
@@ -322,6 +308,15 @@ The \texttt{FailureDetector} implements a two-phase timeout-based scheme:
   \item \textbf{Dead phase} (\texttt{DEAD\_TIMEOUT}, default 20 seconds): if the silence continues, the peer is marked as \texttt{dead}. A \texttt{PEER\_DEAD} message is broadcast, and the peer is removed from the active peer list.
 \end{itemize}
 
+The failure detection system is shown in figure \cref{fig:design-failure-detector}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.75\textwidth]{figures/failure-detector}
+    \caption{Failure detector state machine.}
+    \label{fig:design-failure-detector}
+\end{figure}
+
 The two-phase design avoids premature removal: transient network delays or temporary processing stalls trigger suspicion (which is reversible) rather than immediate removal.
 The ``alive'' declaration mechanism allows a falsely suspected peer to rehabilitate itself.
 
@@ -339,7 +334,7 @@ Running or pending pods are recovered into the local room registry, avoiding orp
 \paragraph{Error Handling.}
 \begin{itemize}
   \item \textbf{Network errors}: UDP send failures (DNS resolution, socket errors) are logged but do not crash the hub. The gossip protocol's redundant forwarding paths compensate for individual message losses.
-  \item \textbf{Malformed messages}: protobuf deserialization errors are caught in \texttt{HubSocketHandler.\_handle\_message} and logged, preventing invalid data from corrupting hub state.
+  \item \textbf{Malformed messages}: protobuf deserialization errors are caught in \texttt{HubSocketHandler} and logged, preventing invalid data from corrupting hub state.
   \item \textbf{Room health failures}: rooms that fail HTTP health checks are handled gracefully (local rooms transitioned, remote rooms removed from state).
   \item \textbf{Kubernetes API failures}: pod/service creation errors are caught and logged, allowing the hub to continue operating with a reduced room pool.
 \end{itemize}
@@ -444,3 +439,5 @@ The Room Server validates every request against the game rules (e.g., checking f
 \paragraph{Cryptography.}
 Like the Hub Server, the Room Server relies on unencrypted TCP streams. 
 While vulnerable to packet sniffing, it is deemed acceptable for the purpose of this application.
+\newline
+\textbf{Please note:} a HTTPS tunnel exists between the client and the nginx front-end server.

@@ -17,7 +17,7 @@ This component is responsible for managing the cluster of hubs, coordinating pee
     \begin{itemize}
         \item Hubs must propagate cluster events (peer lifecycle changes, room state transitions) using a gossip protocol over UDP, with Proto Buf as the serialization format.
         \item Message forwarding must use a fanout-bounded strategy: each hub forwards a received message to at most \texttt{HUB\_FANOUT}\footnote{\texttt{HUB\_FANOUT} = 4 by default} peers, preventing message storms while ensuring dissemination.
-        \item Duplicate messages must be detected and discarded using a per-peer nonce tracking mechanism.
+        \item Duplicate messages must be detected and discarded using nonce based information.
         \item \textit{Acceptance Criterion:} A \texttt{ROOM\_ACTIVATED} event originating from one hub is received by all alive hubs in the cluster.
     \end{itemize}
 
@@ -25,7 +25,7 @@ This component is responsible for managing the cluster of hubs, coordinating pee
     \begin{itemize}
         \item Each hub must run a periodic failure detector that monitors peer liveness based on heartbeat timestamps.
         \item A peer that has not sent any message within \texttt{SUSPECT\_TIMEOUT} seconds must be marked as \textit{suspected}. A peer silent for more than \texttt{DEAD\_TIMEOUT} seconds must be marked as \textit{dead} and removed from the active peer list.
-        \item \textit{Acceptance Criterion:} If a hub process is killed, the remaining hubs detect the failure and mark the peer as dead within \texttt{DEAD\_TIMEOUT} seconds. Suspected and dead transitions are broadcast to the cluster.
+        \item \textit{Acceptance Criterion:} If a hub process is killed, the remaining hubs detect the failure and mark the peer as dead within \texttt{DEAD\_TIMEOUT} seconds. Suspected and dead events are broadcast to the cluster.
     \end{itemize}
 
     \item \textbf{Room Lifecycle Management - Hub POV}
@@ -53,19 +53,20 @@ This component is responsible for managing the cluster of hubs, coordinating pee
     \item \textbf{Eventual Consistency}
     \begin{itemize}
         \item The local state of each hub (peer list, room registry) must converge to a consistent view, given that gossip messages are eventually delivered.
-        \item \textit{Acceptance Criterion:} After a room activation event, all alive hubs reflect the new room in their local state within a bounded number of gossip rounds (dependent on cluster size and fanout), if an hub does not see a message of room activation in a finite time that room will be deactivated, so the state matches with other peers. Additionally, other lost information will be discovered by peer automatically.
+        \item If a hub does not receive a room activation message for some short temporary network failure (i.e. collisions), the room is not returned by that hub, in addition the room will be marked as not joinable in a finite time.
+        \item \textit{Acceptance Criterion:} After a room activation event, all alive hubs reflect the new room in their local state within a bounded number of gossip rounds (dependent on cluster size and fanout), if network failures does not occur.
     \end{itemize}
 
     \item \textbf{Scalability}
     \begin{itemize}
         \item The gossip protocol must scale with the number of hubs. The fanout-bounded forwarding ensures that per-node network load grows logarithmically rather than linearly with cluster size.
-        \item \textit{Acceptance Criterion:} Increasing the number of hubs from 3 to 10 does not cause message storms or significant increase in per-hub message processing load.
+        \item \textit{Acceptance Criterion:} Increasing the number of hubs from 4 to 10 does not cause message storms or significant increase in per-hub message processing load.
     \end{itemize}
 
     \item \textbf{Resilience to Message Loss}
     \begin{itemize}
         \item Since the gossip protocol operates over UDP, occasional message loss is expected. The system must tolerate lost messages through redundant forwarding paths inherent to the gossip protocol.
-        \item \textit{Acceptance Criterion:} The system continues to function correctly even if individual gossip packets are dropped, as redundant paths ensure eventual delivery.
+        \item \textit{Acceptance Criterion:} The system continues to function correctly even if individual gossip packets are dropped, as redundant paths ensure eventual delivery, in case of all knowing peers \footnote{A situation where all peers know each other}
     \end{itemize}
 \end{enumerate}
 
@@ -85,55 +86,6 @@ This component is responsible for managing the cluster of hubs, coordinating pee
     \end{itemize}
 \end{itemize}
 
-\subsubsection{Relevant Distributed System Features}
-\label{ds-features-hub-server}
-
-The \textit{Hub Server} distributed architecture features are critical to the design and implementation of the cluster coordination layer.
-
-\begin{itemize}
-    \item \textbf{Transparency}
-    \begin{itemize}
-        \item Clients interact with a single HTTP matchmaking endpoint and are unaware that multiple Hub instances exist behind it. The distributed coordination (gossip, peer discovery, failure detection) is entirely hidden from the client perspective.
-        \item Location transparency is achieved through Kubernetes Services: clients connect to a single service address, and the underlying infrastructure routes requests to an available hub.
-    \end{itemize}
-
-    \item \textbf{Fault Tolerance}
-    \begin{itemize}
-        \item The failure detection mechanism uses a two-phase approach: peers are first marked as \textit{suspected} (allowing for transient network issues), then as \textit{dead} only after a longer timeout. This avoids premature removal of peers experiencing temporary connectivity problems.
-        \item When a hub is detected as dead, it is removed from the local peer list. Since each hub operates autonomously with its local state, the failure of one hub does not block the operation of others.
-        \item A hub that was previously marked as dead can rejoin the cluster by sending a new \texttt{PEER\_JOIN} message, enabling recovery without manual intervention.
-    \end{itemize}
-
-    \item \textbf{Scalability}
-    \begin{itemize}
-        \item The fanout-bounded gossip ensures that adding more hubs to the cluster does not result in quadratic message growth. Each hub forwards messages to a fixed maximum number of peers, achieving epidemic-style dissemination with bounded per-node cost.
-        \item Peer discovery in Kubernetes mode uses the Kubernetes API to dynamically resolve the set of hub endpoints, allowing the cluster to scale without reconfiguration.
-    \end{itemize}
-
-    \item \textbf{Resource Sharing}
-    \begin{itemize}
-        \item The primary shared resource is the \textbf{cluster state}: the set of known peers and the registry of active rooms with their player counts.
-        \item Each hub maintains its own copy of this state. Consistency is achieved through the gossip protocol rather than through shared memory or distributed locks, aligning with the AP design choice.
-    \end{itemize}
-
-    \item \textbf{Openness and Interoperability}
-    \begin{itemize}
-        \item The gossip protocol is defined through a Protocol Buffers schema (\texttt{.proto} file), making it language-agnostic. A hub implementation in a different language could participate in the cluster as long as it adheres to the same message format and protocol semantics.
-        \item The client-facing matchmaking endpoint uses standard HTTP, allowing any client implementation to interact with the hub.
-    \end{itemize}
-
-    \item \textbf{Evolvability and Maintainability}
-    \begin{itemize}
-        \item The architecture separates concerns across distinct components: \texttt{HubState} (data management), \texttt{HubSocketHandler} (network I/O), \texttt{FailureDetector} (liveness monitoring), \texttt{RoomManager} (room lifecycle orchestration), and \texttt{HubServer} (coordination logic). This modular design allows individual components to be modified or replaced independently.
-        \item Comprehensive unit test coverage with business-logic-focused testing ensures that refactoring or extending the system does not introduce regressions.
-    \end{itemize}
-
-    \item \textbf{Performance and Concurrency}
-    \begin{itemize}
-        \item The gossip protocol uses UDP datagrams with Protocol Buffers serialization, minimizing per-message overhead and avoiding TCP connection establishment costs.
-        \item The failure detector and peer discovery monitor run as independent background threads, decoupled from the main message processing loop, ensuring that periodic housekeeping tasks do not block client-facing operations.
-    \end{itemize}
-\end{itemize}
 
 \subsection{Room Server}
 This section outlines the specific requirements for the \textit{Room Server} component and the underlying distributed architecture.
@@ -141,122 +93,57 @@ This component is responsible for maintaining the authoritative game state, proc
 
 \subsubsection{Functional Requirements}
 \begin{enumerate}
-  \item \textbf{Game Loop Execution}
-        \begin{itemize}
-          \item The system must run a centralized game loop (tick-based) that updates the game state at a fixed frequency (e.g., 30 ticks per second).
-          \item \textit{Acceptance Criterion:} The server logs show a consistent tick duration, and game physics (bomb timers, movement) progress uniformly.
-        \end{itemize}
+    \item \textbf{Game Loop Execution}
+    \begin{itemize}
+        \item The system must run a centralized game loop (tick-based) that updates the game state at a fixed frequency (e.g., 30 ticks per second).
+        \item \textit{Acceptance Criterion:} The server logs show a consistent tick duration, and game physics (bomb timers, movement) progress uniformly.
+    \end{itemize}
 
-  \item \textbf{Input Processing}
-        \begin{itemize}
-          \item The Room Server must accept concurrent inputs (movement, bomb placement) from up to 4 connected clients.
-          \item \textit{Acceptance Criterion:} When multiple clients send commands simultaneously, the server processes them sequentially within the same tick without dropping data.
-        \end{itemize}
+    \item \textbf{Input Processing}
+    \begin{itemize}
+        \item The Room Server must accept concurrent inputs (movement, bomb placement) from up to 4 connected clients.
+        \item \textit{Acceptance Criterion:} When multiple clients send commands simultaneously, the server processes them sequentially within the same tick without dropping data.
+    \end{itemize}
 
-  \item \textbf{State Broadcasting}
-        \begin{itemize}
-          \item The system must broadcast the full game state to all connected clients after every tick.
-          \item \textit{Acceptance Criterion:} All connected clients receive a game state packet after each tick completion.
-        \end{itemize}
+    \item \textbf{State Broadcasting}
+    \begin{itemize}
+        \item The system must broadcast the full game state to all connected clients after every tick.
+        \item \textit{Acceptance Criterion:} All connected clients receive a game state packet after each tick completion.
+    \end{itemize}
 
-  \item \textbf{Dynamic Player Management}
-        \begin{itemize}
-          \item The system must handle the sudden disconnection of a player by removing their entity from the game board or marking them as "inactive".
-          \item \textit{Acceptance Criterion:} If a client process is killed, the server detects the broken pipe, logs the event, and the remaining players see the disconnected avatar disappear.
-        \end{itemize}
+    \item \textbf{Dynamic Player Management}
+    \begin{itemize}
+        \item The system must handle the sudden disconnection of a player by removing their entity from the game board or marking them as "inactive".
+        \item \textit{Acceptance Criterion:} If a client process is killed, the server detects the broken pipe, logs the event, and the remaining players see the disconnected avatar disappear.
+    \end{itemize}
 \end{enumerate}
 
 \subsubsection{Non-Functional Requirements}
 \begin{enumerate}
-  \item \textbf{Consistency}
-        \begin{itemize}
-          \item The game state must be strictly consistent across all clients. The server is the single source of truth.
-          \item \textit{Acceptance Criterion:} Clients never observe conflicting states (e.g., one client sees a bomb while another does not) and all clients see the same game state after each tick, as the server broadcasts the authoritative snapshot.
-        \end{itemize}
+    \item \textbf{Consistency}
+    \begin{itemize}
+        \item The game state must be strictly consistent across all clients. The server is the single source of truth.
+        \item \textit{Acceptance Criterion:} Clients never observe conflicting states (e.g., one client sees a bomb while another does not) and all clients see the same game state after each tick, as the server broadcasts the authoritative snapshot.
+    \end{itemize}
 
-  \item \textbf{Responsiveness}
-        \begin{itemize}
-          \item The end-to-end latency (input $\rightarrow$ server processing $\rightarrow$ state update) should be minimized to ensure playability.
-          \item \textit{Acceptance Criterion:} The game feels responsive to keyboard inputs on a standard LAN connection.
-        \end{itemize}
+    \item \textbf{Responsiveness}
+    \begin{itemize}
+        \item The end-to-end latency (input $\rightarrow$ server processing $\rightarrow$ state update) should be minimized to ensure playability.
+        \item \textit{Acceptance Criterion:} The game feels responsive to keyboard inputs on a standard LAN connection.
+    \end{itemize}
 
-  \item \textbf{Fairness}
-        \begin{itemize}
-          \item The order of event processing must be fair: game actions are processed in a deterministic, and consistent manner.
-          \item \textit{Acceptance Criterion:} Simultaneous conflicting actions are resolved consistently by the server logic (e.g. First-In-First-Served Queue).
-        \end{itemize}
+    \item \textbf{Fairness}
+    \begin{itemize}
+        \item The order of event processing must be fair: game actions are processed in a deterministic, and consistent manner.
+        \item \textit{Acceptance Criterion:} Simultaneous conflicting actions are resolved consistently by the server logic (e.g. First-In-First-Served Queue).
+    \end{itemize}
 \end{enumerate}
 
 \subsubsection{Implementation Constraints}
 \begin{itemize}
-  \item \textbf{Programming Language}
-        \begin{itemize}
-          \item This component had been implemented in \textbf{Python}.
-          \item \textit{Justification:} Python offers high-level abstractions for socket programming and threading, allowing for rapid prototyping of distributed logic.
-        \end{itemize}
-\end{itemize}
-
-\subsubsection{Relevant Distributed System Features}
-\label{ds-features-room-server}
-
-The \textit{Room Server} distributed architecture features are critical to the design and implementation of the authorative game state management.
-
-\begin{itemize}
-  \item \textbf{Transparency}
-        \begin{itemize}
-          \item It is essential that this system hides the distributed nature of the game state management from clients.
-                Clients invoke game actions (e.g., \texttt{MOVE\_PLAYER(\dots)}) that are validate by the Room Server, and then executed in the new snapshot.
-          \item The Room Server must handle multiple players simultaneously without them noticing that they are competing for shared resources.
-        \end{itemize}
-
-  \item \textbf{Fault Tolerance}
-        \begin{itemize}
-          \item If a client crashes (Application Failure) or a link drops (Network Failure), the Room Server must continue execution for the remaining players.
-                If the Room Server itself fails, the last game state is preserved on disk, so the Hub can restart the Room Server and clients can reconnect to a resumed and valid match.
-                The saved state is considered "too old" if it was saved more than a fixed amount of time ago (e.g., 30 seconds).
-                Hanging clients are detected by the server via socket timeouts, and are removed from the game after a short grace period.
-          \item The system should recover from client failures within a few seconds, allowing the game to continue with minimal disruption.
-                If the Room Server fails, it should be able to restart and restore the last valid game state within a fixed amount of time; if the saved state is too old, a new game should be started instead.
-        \end{itemize}
-
-  \item \textbf{Scalability}
-        \begin{itemize}
-          \item The architecture supports increasing the number of concurrent games by spawning more \texttt{Game Engine} threads.
-        \end{itemize}
-
-  \item \textbf{Security and Trust}
-        \begin{itemize}
-          \item The system assumes a trusted environment where clients are not malicious.
-                Therefore, no authentication or encryption is implemented in this version.
-                Even though clients could potentially send malformed packets or attempt to cheat, the server validates all inputs and maintains authority over the game state, preventing any client-side manipulation from affecting the overall game integrity.
-                This ensures that not-cheating players are protected from malicious behavior by other clients.
-        \end{itemize}
-
-  \item \textbf{Resource Sharing}
-        \begin{itemize}
-          \item The primary shared resource is the \textbf{Game Snapshot}.
-                Multiple clients read and attempt to write (place bombs, destroy walls) to this shared state.
-          \item \textit{Synchronization} The Game Engine thread is the only one that modifies the game state, while client handler threads only read the state and enqueue player actions.
-                This design avoids the need for complex synchronization mechanisms on the game state, and provides a clear separation of concerns. 
-                Also the server processes player actions sequentially within the game loop, ensuring that all updates to the game state are atomic and consistent (tick-based loop).
-        \end{itemize}
-
-  \item \textbf{Openness and Interoperability}
-        \begin{itemize}
-          \item The system is designed to be self-contained, with no external dependencies or interoperability requirements.
-                However, the communication protocol is simple enough that it could be extended in the future to support clients implemented in other languages or platforms.
-                Everything is as generic as possible, so the Room Server could be replaced with a different implementation (e.g., in C++ or Java) as long as it adheres to the same communication protocol.
-        \end{itemize}
-
-  \item \textbf{Evolvability and Maintainability}
-        \begin{itemize}
-          \item The codebase is structured in a modular way, separating the game logic from the networking code (server management).
-                This allows for easier maintenance and future extensions.
-        \end{itemize}
-
-  \item \textbf{Performance and Concurrency}
-        \begin{itemize}
-          \item The system is highly parallelizable, with the Room Server handling multiple clients concurrently while maintaining a single authoritative game state.
-                The use of a tick-based game loop allows for benchmarked performance and simplifies the handling of concurrent actions.
-        \end{itemize}
+    \item \textbf{Programming Language}
+    \begin{itemize}
+        \item This component had been implemented in \textbf{Python}.
+        \item \textit{Justification:} Python offers high-level abstractions for socket programming and threading, allowing for rapid prototyping of distributed logic.
+    \end{itemize}
 \end{itemize}
