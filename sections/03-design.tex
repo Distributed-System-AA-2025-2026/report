@@ -11,7 +11,7 @@ No hub acts as a coordinator or leader: every instance maintains its own local c
 
 This choice is motivated by the AP orientation identified in the requirements.
 A leader-based architecture (e.g., Raft, Paxos) would provide strong consistency but would sacrifice availability during leader elections or network partitions.
-Since the Hub's primary role is matchmaking (returning a joinable room to clients), temporary inconsistencies between hubs (e.g., two hubs briefly disagreeing on a room's player count) are tolerable and self-correcting via gossip convergence.
+Since the Hub's primary role is matchmaking (returning a joinable room to clients), temporary inconsistencies between hubs are tolerable and self-correcting via gossip convergence or system evolving.
 
 The client-facing layer uses a standard \textbf{request-response} pattern over HTTP (via FastAPI), decoupled from the internal gossip communication.
 This separates the concerns of client interaction (synchronous, HTTP) from cluster coordination (asynchronous, UDP gossip).
@@ -159,7 +159,14 @@ The client sends a \texttt{POST /matchmaking} request.
 The hub consults its local \texttt{HubState} for a joinable room (status \texttt{ACTIVE}, \texttt{player\_count < max\_players}).
 If found, the hub increments the player count, broadcasts a \texttt{ROOM\_PLAYER\_JOINED} gossip message, and returns the room's address and port.
 If no joinable room exists, the hub asks its \texttt{RoomManager} to activate a dormant room (or create a new one in K8s mode); upon success, it broadcasts \texttt{ROOM\_ACTIVATED} and returns the new room's details.
-If activation fails, the hub returns HTTP 503.
+If activation fails, the hub returns HTTP 503. The interaction between client and hub is shown in figure \ref{fig:client-hub-interaction}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.7\textwidth]{figures/hub-http-high-level.png}
+  \caption{Client interaction with the Hub cluster. Clients connect to a single entry point without knowledge of which hub instance serves their request.}
+  \label{fig:client-hub-interaction}
+\end{figure}
 
 \paragraph{Room $\rightarrow$ Hub (HTTP callbacks).}
 The Room Server notifies the hub of lifecycle transitions:
@@ -444,3 +451,5 @@ The Room Server validates every request against the game rules (e.g., checking f
 \paragraph{Cryptography.}
 Like the Hub Server, the Room Server relies on unencrypted TCP streams. 
 While vulnerable to packet sniffing, it is deemed acceptable for the purpose of this application.
+\newline
+\textbf{Plase note:} a HTTPS tunnel exists between the client and the nginx front-end server.
