@@ -25,11 +25,10 @@ The Hub Server uses two distinct network protocols, chosen to match the communic
 \subsubsection{Database}
 
 The Hub Server does not use any database. All state is held in-memory in the \texttt{HubState} object. On restart, room state is recovered from the Kubernetes API (querying existing pods), and peer state is reconstructed through gossip protocol convergence. This choice eliminates an external dependency and is consistent with the ephemeral nature of the hub's coordination role.
-A possible implementation should be implement a mechanism that insert when a room is activated (in this case the activator should make an INSERT over the database - if a relational one is chosen) or when a room is closed, in this case when a room is closed. But in every case if the Database is unreachable a best effort approach should be tollered or another system should be implemented.
 
 \subsubsection{Authentication and Authorization}
 
-No authentication or authorization is implemented. All endpoints (matchmaking, room callbacks, debug) are unauthenticated. The system relies on Kubernetes network-level isolation: only pods within the cluster can reach the gossip port and the internal HTTP API. This is documented as a known limitation in \cref{security}.
+No authentication or authorization is implemented. This is documented as a known limitation in \cref{security}.
 
 \subsubsection{Technological Details}\label{tech-details-hub}
 
@@ -64,26 +63,6 @@ The Hub Server runs multiple concurrent threads:
 \end{itemize}
 
 All threads access shared state through the \texttt{HubState}'s \texttt{RLock}. All background threads are started as daemon threads, ensuring they terminate automatically when the main process exits.
-
-\paragraph{Configuration.}
-The Hub Server is configured entirely through environment variables, enabling Kubernetes-native configuration via \texttt{ConfigMap} and \texttt{StatefulSet} environment injection:
-
-\begin{center}
-  \begin{tabular}{l l l}
-    \textbf{Variable} & \textbf{Purpose} & \textbf{Default} \\
-    \hline
-    \texttt{HOSTNAME} & Pod hostname, used for index derivation & \texttt{hub-0.local} \\
-    \texttt{GOSSIP\_PORT} & UDP port for gossip & (required) \\
-    \texttt{HUB\_FANOUT} & Max peers per forward & \texttt{4} \\
-    \texttt{HUB\_SERVICE\_NAME} & K8s headless service name & \texttt{hub-service} \\
-    \texttt{K8S\_NAMESPACE} & Kubernetes namespace & \texttt{bomberman} \\
-    \texttt{EXPECTED\_HUB\_COUNT} & Expected cluster size for discovery & \texttt{hub\_index + 1} \\
-    \texttt{HUB\_DISCOVERY\_MODE} & Discovery mode (\texttt{manual}/\texttt{k8s}) & \texttt{manual} \\
-    \texttt{HTTP\_PORT} & HTTP API port & \texttt{8000} \\
-    \texttt{FAILURE\_DETECTOR\_SUSPECT\_TIMEOUT} & Seconds before suspecting a peer & \texttt{5} \\
-    \texttt{FAILURE\_DETECTOR\_DEAD\_TIMEOUT} & Seconds before declaring dead & \texttt{20} \\
-  \end{tabular}
-\end{center}
 
 \subsection{Room Server}\label{implementation-room}
 
@@ -152,6 +131,13 @@ The Room Server runs the following distinct threads:
 \end{itemize}
 
 \paragraph{Docker and Kubernetes Integration.}
-The Room Server is packaged in a Docker container. 
-It is deployed dynamically by the Hub Server as a raw Kubernetes \texttt{Pod} with a corresponding \texttt{NodePort} service. 
-Configuration (like \texttt{ROOM\_ID} and \texttt{HUB\_API\_URL}) is injected via environment variables at the moment of creation.
+The Room Server is packaged in a Docker container. \cref{deployment-room}
+
+\newline
+The overview of the implementation is shown in figure \cref{fig:implementation-system-overview}
+\begin{figure}
+    \centering
+    \includegraphics[width=0.85\textwidth]{figures/implementation-system-overview.png}
+    \caption{Matchmaking process}
+    \label{fig:implementation-system-overview}
+\end{figure}

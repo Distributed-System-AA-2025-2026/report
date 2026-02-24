@@ -39,7 +39,7 @@ This included the full gossip protocol (peer lifecycle, room lifecycle, fanout-b
 In addition to the application code, I was responsible for the \textbf{infrastructure and DevOps} side of the project:
 the Docker multi-stage builds, the Kubernetes manifests (StatefulSet, headless Service, RBAC, Ingress, ConfigMap), the CI/CD pipeline (GitHub Actions with automated testing, container registry publishing, and deployment to a self-hosted runner), and the production network setup (ZeroTier VPN tunnel, Nginx TLS termination, iptables NAT forwarding for game traffic).
 
-I also wrote the \textbf{unit test suite} for the Hub Server (194 tests across 13 files), designed to target business logic exclusively and to surface real bugs rather than verify trivial implementation details.
+I also wrote the \textbf{unit test suite} for the Hub Server, designed to target business logic exclusively and to surface real bugs rather than verify trivial implementation details.
 
 Finally, I authored the Hub Server sections of the technical report.
 

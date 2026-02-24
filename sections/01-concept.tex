@@ -35,39 +35,25 @@ The necessity for distribution is justified by the following factors:
 \end{itemize}
 
 \subsubsection{Hub Server}
-The \textbf{Hub Server} acts as the entry point for the distributed system.
-From a CAP theorem perspective, it is \textbf{AP-oriented}: its primary goal is to guarantee \textbf{Availability} and \textbf{Partition Tolerance}, accepting eventual consistency across hub instances.
+
+The Hub Server acts as the entry point for the distributed system.
+From a CAP theorem perspective, it is \textbf{AP-oriented}: its primary goal is to guarantee Availability and Partition Tolerance, accepting eventual consistency across hub instances.
 
 Multiple Hub Server instances form a peer-to-peer overlay network, where each hub maintains a local view of the cluster state (known peers, active rooms, player counts).
-Hubs synchronize this state through a \textbf{gossip protocol} over UDP, using Proto Buf for message serialization.
-The gossip layer handles two categories of events:
-\begin{itemize}
-    \item \textbf{Peer lifecycle}: join, leave, alive, suspicious, and dead notifications, enabling distributed peer discovery and failure detection without a central coordinator.
-    \item \textbf{Room lifecycle}: room activation, player joins, game start, and room closure, ensuring all hubs share a consistent (eventually) view of available game sessions.
-\end{itemize}
-
-Messages are propagated using a \textbf{fanout-based forwarding} strategy: each hub forwards received gossip messages to a bounded subset of its known peers.
+Hubs synchronize this state through a gossip protocol, handling two categories of events: peer lifecycle (join, leave, failure detection) and room lifecycle (activation, player joins, game start, closure).
 
 When a client requests to join a game, the Hub Server consults its local state to find a joinable room and returns the corresponding connection details.
-If no room is available, the hub triggers the activation of a new room instance and communicates to other peers that.
+If no room is available, the hub triggers the activation of a new room instance.
 This design ensures that clients always receive a response, even if some hubs in the cluster are temporarily unreachable.
+The architectural and protocol details are discussed in \cref{architecture,interaction}.
 
 \subsubsection{Room Server}
-The \textbf{Room Server} is the core execution unit responsible for managing the game state and facilitating synchronized communication between clients.
-It acts as the single \textbf{authoritative component} for a specific match, receiving player actions and applying them deterministically within a strict tick-based loop.
 
-The Room Server guarantees that all players view a consistent evolution of the game state.
-This is essential for preventing weird scenarios and ensuring fairness (e.g., preventing two players placing a bomb at the same time in the same spot).
-The design choice for the Room Server is then \textbf{CP-oriented} (Consistency and Partition Tolerance).
-It prioritizes strong consistency at the granularity of a match, even at the cost of temporarily excluding clients with unstable connections.
+The Room Server is the execution unit responsible for managing the authoritative game state of a single match.
+It receives player actions and applies them deterministically within a tick-based loop, guaranteeing that all players observe the same state evolution.
 
-\textbf{Technical implementation details:}
-\begin{itemize}
-    \item \textbf{Communication}: Clients connect via persistent TCP channels.
-    \item \textbf{Protocol}: The system exchanges compact messages (using Protocol Buffers), allowing the server to efficiently collect inputs and broadcast game state snapshots at a fixed frequency.
-    \item \textbf{Isolation}: This architecture isolates the time-sensitive game loop from the availability-oriented matchmaking tier.
-    \item \textbf{Resilience}: The Room Server provides limited fault tolerance by maintaining the session state in memory, saving it to disk periodically.
-    This allows for graceful reconnection: if a client disconnects transiently, they can rejoin within a bounded time window and resume play, ensuring that minor network failures do not invalidate the entire match.
-    Also, if the Room Server itself fails, it can be restarted without affecting the overall system availability, as the Hub Server remains operational and can redirect new clients to other active rooms.
-    As a matter of fact, the system is designed to be resilient to partial failures, ensuring that the user experience remains uninterrupted even under adverse conditions.
-\end{itemize}
+From a CAP perspective, the Room Server is \textbf{CP-oriented}: it prioritizes strong consistency at the granularity of a match, even at the cost of temporarily excluding clients with unstable connections.
+
+Clients connect via persistent TCP channels and exchange compact Protocol Buffers messages.
+The Room Server provides limited fault tolerance through periodic state snapshotting and bounded reconnection windows, allowing clients to rejoin after transient disconnections.
+The design and implementation details are discussed in \cref{architecture,behaviour}.

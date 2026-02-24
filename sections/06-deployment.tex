@@ -13,7 +13,7 @@ The following software is required on the deployment machine:
     MicroK8s        & v1.32.9           & Kubernetes distribution \\
     Docker          & 20.10+            & Image building \\
     Python          & 3.11+             & Application runtime (inside containers) \\
-    Poetry          & 1.7.1             & Dependency management (inside containers) \\
+    Poetry          & 2.0.0+            & Dependency management (inside containers) \\
   \end{tabular}
 \end{center}
 
@@ -141,6 +141,13 @@ iptables -t nat -A POSTROUTING -p tcp -d <microk8s-zerotier-ip> \
     --dport 30000:32767 -j MASQUERADE
 \end{verbatim}
 This allows clients to connect directly to room game sockets via the public VPS address and the NodePort assigned to each room.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\textwidth]{figures/deployment.png}
+    \caption{Deployment diagram.}
+    \label{fig:deployment-diagram}
+\end{figure}
 
 \subsection{Room Server}\label{deployment-room}
 The Room Server does not have an independent deployment procedure.

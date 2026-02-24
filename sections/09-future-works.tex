@@ -51,8 +51,7 @@ Currently, all communication exception for client-hub is unencrypted within the 
 We could provide mutual TLS between all components.
 
 \paragraph{Client Reconnection.}
-If a client disconnects during a game (network failure, crash), there is currently no way to rejoin the same room.
-Implementing a session token mechanism, where the hub assigns a token at matchmaking time and the room accepts reconnections bearing that token within a grace period, would improve the player experience on unstable networks.
+Implementing a session token mechanism, where the hub assigns a token at matchmaking time and the room could accept reconnections bearing that token within a grace period, would improve the player experience on unstable networks.
 
 \paragraph{Cross-Region Deployment.}
 The current deployment assumes a single Kubernetes cluster.
