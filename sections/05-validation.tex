@@ -2,9 +2,7 @@
 
 \subsection{Automatic Testing}\label{automatic-testing}
 
-\subsubsection{Hub Server}
-
-\paragraph{Unit Testing Strategy.}
+\subsubsection{Hub Server - Unit test}
 The Hub Server unit test suite covers all source files through a one-to-one correspondence: each class under test has a dedicated test file (e.g., \texttt{test\_hub\_state.py} tests \texttt{HubState.py}).
 Every test verifies an observable behavior or state transition, not implementation details such as log output or internal method call counts.
 
@@ -27,27 +25,10 @@ The unit tests cover the following categories of business logic, each motivated 
     Covers all 9 event types through the dispatch mechanism.
 
     \item \textbf{Peer Lifecycle Handlers} (\textit{Req: Peer Discovery, Failure Detection}).
-    Validates each peer event handler in isolation:
-    \texttt{PEER\_JOIN} creates a new peer in state;
-    \texttt{PEER\_LEAVE} marks the peer as dead;
-    \texttt{PEER\_ALIVE} resets a suspected peer to alive;
-    \texttt{PEER\_SUSPICIOUS} triggers an alive broadcast only when the local hub is the suspected one;
-    \texttt{PEER\_DEAD} removes a peer only if it was already suspected (trusting the local failure detector over remote declarations for alive peers).
 
-    \item \textbf{Failure Detection Logic} (\textit{Req: Failure Detection}).
-    Tests the two-phase timeout state machine with controlled time mocking:
-    alive peers within \texttt{SUSPECT\_TIMEOUT} remain unchanged;
-    alive peers past \texttt{SUSPECT\_TIMEOUT} transition to suspected;
-    suspected peers past \texttt{DEAD\_TIMEOUT} transition to dead;
-    alive peers past \texttt{DEAD\_TIMEOUT} skip suspected and go directly to dead;
-    dead peers are ignored (no further transitions).
-    Self-exclusion is verified (a hub never suspects itself).
+    \item \textbf{Failure Detection Logic} Tests the two-phase timeout state machine with controlled time mocking:
 
-    \item \textbf{Room Lifecycle Management} (\textit{Req: Room Lifecycle Management, Client Matchmaking}).
-    Verifies the full room lifecycle through gossip:
-    \texttt{ROOM\_ACTIVATED} adds a remote room to local state;
-    \texttt{ROOM\_STARTED} transitions to PLAYING;
-    \texttt{ROOM\_CLOSED} transitions to DORMANT.
+    \item \textbf{Room Lifecycle Management} Verifies the full room lifecycle through gossip:
     Tests the matchmaking logic: returns an existing joinable room with incremented player count, activates a new room when none available, returns \texttt{None} when activation fails.
 
     \item \textbf{Room Health Monitoring} (\textit{Req: Failure Detection}).
@@ -72,57 +53,6 @@ The unit tests cover the following categories of business logic, each motivated 
     Tests server reference calculation for both manual (localhost + port offset) and K8s (DNS-based) modes.
 \end{enumerate}
 
-\paragraph{Integration Testing.}
-
-While unit tests mock all external dependencies, integration tests exercise the boundaries between real components, using minimal mocking limited to infrastructure that cannot run locally (Kubernetes API).
-The integration test suite covers the following areas:
-
-\begin{enumerate}
-    \item \textbf{Peer Communication via UDP Gossip.}
-    Two real \texttt{HubServer} instances exchange gossip messages over actual UDP sockets on localhost.
-    The test verifies that a \texttt{PEER\_JOIN} message sent by hub-0 is received, deserialized, and processed by hub-1, resulting in hub-0 appearing in hub-1's peer list.
-    This tests the full stack: \texttt{HubSocketHandler} serialization $\rightarrow$ UDP transport $\rightarrow$ \texttt{HubSocketHandler} deserialization $\rightarrow$ \texttt{HubServer.\_on\_gossip\_message} $\rightarrow$ \texttt{HubState} mutation.
-
-    \item \textbf{HTTP API Endpoints.}
-    A real \texttt{HubServer} is started with a real FastAPI application.
-    The test exercises the \texttt{/matchmaking}, \texttt{/room/\{id\}/start}, \texttt{/room/\{id\}/close}, \texttt{/health}, \texttt{/ready}, and \texttt{/debug/} endpoints via HTTP requests, verifying that state changes propagate correctly between the API layer and the underlying \texttt{HubServer} business logic.
-
-    \item \textbf{Local Room Manager Lifecycle.}
-    A real \texttt{LocalRoomManager} creates a room pool, activates rooms, and transitions them through the full lifecycle (\texttt{DORMANT} $\rightarrow$ \texttt{ACTIVE} $\rightarrow$ \texttt{PLAYING} $\rightarrow$ \texttt{DORMANT}).
-    The test verifies that the activation callback is invoked with correct room data, that port allocation avoids collisions, and that cleanup removes all rooms.
-
-    \item \textbf{Kubernetes Room Manager.}
-    Integration with the Kubernetes API is tested using a mocked \texttt{CoreV1Api} (since a real cluster is not available in CI), but all other components (\texttt{K8sRoomManager}, \texttt{Room}, \texttt{RoomStatus}) are real.
-    Tests cover pool initialization, existing room recovery from pod labels, dynamic room creation when the pool is exhausted, and cleanup of pods and services.
-
-    \item \textbf{Failure Detection Flow.}
-    A real \texttt{FailureDetector} runs against a real \texttt{HubState} with controlled timestamps.
-    The test verifies the full detection flow: a peer whose \texttt{last\_seen} is artificially aged triggers the \texttt{on\_peer\_suspected} callback, and further aging triggers \texttt{on\_peer\_dead}.
-    This catches timing bugs that unit tests with fully mocked state cannot detect.
-
-    \item \textbf{Room Health Monitoring.}
-    A real \texttt{RoomHealthMonitor} checks rooms against a mocked HTTP server (via \texttt{responses} library or \texttt{requests\_mock}).
-    The test verifies that ACTIVE rooms with a reachable health endpoint remain in state, while rooms returning unexpected statuses or failing to respond trigger the \texttt{on\_room\_unhealthy} callback.
-
-    \item \textbf{Gossip Deduplication.}
-    A real \texttt{HubServer} receives the same gossip message twice (same origin and nonce).
-    The test verifies that the message is processed only once: the first reception updates state and triggers forwarding, while the second reception is silently discarded.
-    This tests the interaction between \texttt{HubState.execute\_heartbeat\_check} and the message processing pipeline, which unit tests exercise separately.
-
-    \item \textbf{Matchmaking Flow.}
-    A real \texttt{HubServer} with a real \texttt{LocalRoomManager} handles a matchmaking request end-to-end.
-    The test verifies that when no active room exists, the server activates a dormant room, broadcasts \texttt{ROOM\_ACTIVATED} via the socket handler, increments the player count, broadcasts \texttt{ROOM\_PLAYER\_JOINED}, and returns the room connection details.
-\end{enumerate}
-
-\paragraph{Bugs Discovered by Integration Tests.}
-The integration test suite for the \texttt{K8sRoomManager} uncovered four bugs that unit tests did not catch, because they only manifest at component boundaries:
-\begin{itemize}
-    \item \textbf{Pod recovery state mapping}: running and pending pods were both mapped to \texttt{ACTIVE} status, but pending pods are not yet accepting connections, leading to health check failures on recovered rooms.
-    \item \textbf{Resource leak on creation failure}: if pod creation succeeded but service creation failed, the pod was not cleaned up, leaving orphaned pods in the cluster.
-    \item \textbf{Timeout handling in pod deletion}: \texttt{\_wait\_for\_pod\_deletion} did not propagate \texttt{ApiException} for non-404 errors, silently swallowing cluster communication failures.
-    \item \textbf{Interface contract violation}: \texttt{K8sRoomManager.\_create\_room} returned \texttt{int | None} instead of \texttt{bool} as declared by \texttt{RoomManagerBase.\_create\_room}, breaking the Liskov substitution principle.
-\end{itemize}
-
 \paragraph{Unit Test Bug Discovery.}
 The unit testing process also identified bugs in the initial implementation:
 \begin{itemize}
@@ -131,42 +61,7 @@ The unit testing process also identified bugs in the initial implementation:
     \item Room status validation allowed constructing a Room with \texttt{player\_count > max\_players} if the count was set after construction via the setter (the check only ran in \texttt{\_\_init\_\_}).
 \end{itemize}
 
-\paragraph{End-to-End Testing.}
-
-An end-to-end test validates the full system against a live deployment.
-The test is a scripted game scenario that exercises the entire stack: client $\rightarrow$ hub matchmaking $\rightarrow$ room connection $\rightarrow$ gameplay $\rightarrow$ game over.
-
-The scenario proceeds as follows:
-\begin{enumerate}
-    \item Two players (``Daniele'' and ``Enrico'') connect to the Hub via \texttt{/matchmaking} and receive the same room assignment.
-    \item Both players join the room and wait for the countdown to start.
-    \item Each player executes a predetermined sequence of moves. The sequence is designed so that Enrico wins the game.
-    \item The test verifies that the game reaches \texttt{GAME\_OVER} state with Enrico as the winner, and that the room is properly closed and reported back to the hub.
-\end{enumerate}
-
-The E2E test runs automatically in the CD pipeline after deployment, preceded by a 300-second stabilization period to allow all hub pods to reach ready state and complete initial gossip convergence.
-This is integrated into the GitHub Actions workflow as a post-deployment verification step: if the E2E test fails, the deployment is flagged as broken.
-
-\paragraph{How to Run.}
-\begin{verbatim}
-# Unit tests
-pytest tests/unit/hub_server/ -v
-pytest tests/unit/common/ -v
-
-# Integration tests
-pytest tests/integration/hub_server/ -v
-
-# E2E test (requires a live deployment)
-pytest tests/e2e/ -v
-
-# Coverage
-pytest tests/unit/hub_server/ --cov=bomberman.hub_server \
-    --cov-report=term-missing
-\end{verbatim}
-
-\subsubsection{Room Server}
-
-\paragraph{Unit Testing Strategy.}
+\subsubsection{Room Server - Unit test}
 The Room Server unit test suite covers all source files.
 Given the authoritative nature of the Room Server, the testing strategy focuses heavily on \textbf{deterministic state transitions} and \textbf{crash recovery scenarios}.
 Every test verifies observable state changes, fault tolerance behavior, or network protocol correctness, rather than internal implementation details.
@@ -249,6 +144,78 @@ The testing process identified edge cases in the initial implementation:
     \item Bomb placement is limited by position rather than strictly per-player: if two players occupy the same tile, only the first can place a bomb at that location.
     \item Player removal is only allowed during \texttt{WAITING\_FOR\_PLAYERS} state; attempting removal during \texttt{IN\_PROGRESS} raises \texttt{ValueError} to preserve game integrity. This is useful for player reconnections.
 \end{itemize}
+
+\subsubsection{Integration Testing.}
+
+While unit tests mock all external dependencies, integration tests exercise the boundaries between real components, using minimal mocking limited to infrastructure that cannot run locally (Kubernetes API).
+The integration test suite covers the following areas:
+
+\begin{enumerate}
+    \item \textbf{Peer Communication via UDP Gossip.}
+    Two real \texttt{HubServer} instances exchange gossip messages over actual UDP sockets on localhost.
+    The test verifies that a \texttt{PEER\_JOIN} message sent by hub-0 is received, deserialized, and processed by hub-1, resulting in hub-0 appearing in hub-1's peer list.
+    This tests the full stack: \texttt{HubSocketHandler} serialization $\rightarrow$ UDP transport $\rightarrow$ \texttt{HubSocketHandler} deserialization $\rightarrow$ \texttt{HubServer.\_on\_gossip\_message} $\rightarrow$ \texttt{HubState} mutation.
+
+    \item \textbf{HTTP API Endpoints.}
+    A real \texttt{HubServer} is started with a real FastAPI application.
+    The test exercises the \texttt{/matchmaking}, \texttt{/room/\{id\}/start}, \texttt{/room/\{id\}/close}, \texttt{/health}, \texttt{/ready}, and \texttt{/debug/} endpoints via HTTP requests, verifying that state changes propagate correctly between the API layer and the underlying \texttt{HubServer} business logic.
+
+    \item \textbf{Local Room Manager Lifecycle.}
+    A real \texttt{LocalRoomManager} creates a room pool, activates rooms, and transitions them through the full lifecycle (\texttt{DORMANT} $\rightarrow$ \texttt{ACTIVE} $\rightarrow$ \texttt{PLAYING} $\rightarrow$ \texttt{DORMANT}).
+    The test verifies that the activation callback is invoked with correct room data, that port allocation avoids collisions, and that cleanup removes all rooms.
+
+    \item \textbf{Kubernetes Room Manager.}
+    Integration with the Kubernetes API is tested using a mocked \texttt{CoreV1Api} (since a real cluster is not available in CI), but all other components (\texttt{K8sRoomManager}, \texttt{Room}, \texttt{RoomStatus}) are real.
+    Tests cover pool initialization, existing room recovery from pod labels, dynamic room creation when the pool is exhausted, and cleanup of pods and services.
+
+    \item \textbf{Failure Detection Flow.}
+    A real \texttt{FailureDetector} runs against a real \texttt{HubState} with controlled timestamps.
+    The test verifies the full detection flow: a peer whose \texttt{last\_seen} is artificially aged triggers the \texttt{on\_peer\_suspected} callback, and further aging triggers \texttt{on\_peer\_dead}.
+    This catches timing bugs that unit tests with fully mocked state cannot detect.
+
+    \item \textbf{Room Health Monitoring.}
+    A real \texttt{RoomHealthMonitor} checks rooms against a mocked HTTP server (via \texttt{responses} library or \texttt{requests\_mock}).
+    The test verifies that ACTIVE rooms with a reachable health endpoint remain in state, while rooms returning unexpected statuses or failing to respond trigger the \texttt{on\_room\_unhealthy} callback.
+
+    \item \textbf{Gossip Deduplication.}
+    A real \texttt{HubServer} receives the same gossip message twice (same origin and nonce).
+    The test verifies that the message is processed only once: the first reception updates state and triggers forwarding, while the second reception is silently discarded.
+    This tests the interaction between \texttt{HubState.execute\_heartbeat\_check} and the message processing pipeline, which unit tests exercise separately.
+
+    \item \textbf{Matchmaking Flow.}
+    A real \texttt{HubServer} with a real \texttt{LocalRoomManager} handles a matchmaking request end-to-end.
+    The test verifies that when no active room exists, the server activates a dormant room, broadcasts \texttt{ROOM\_ACTIVATED} via the socket handler, increments the player count, broadcasts \texttt{ROOM\_PLAYER\_JOINED}, and returns the room connection details.
+\end{enumerate}
+
+\paragraph{Bugs Discovered by Integration Tests.}
+The integration test suite for the \texttt{K8sRoomManager} uncovered four bugs that unit tests did not catch, because they only manifest at component boundaries:
+\begin{itemize}
+    \item \textbf{Pod recovery state mapping}: running and pending pods were both mapped to \texttt{ACTIVE} status, but pending pods are not yet accepting connections, leading to health check failures on recovered rooms.
+    \item \textbf{Resource leak on creation failure}: if pod creation succeeded but service creation failed, the pod was not cleaned up, leaving orphaned pods in the cluster.
+    \item \textbf{Timeout handling in pod deletion}: \texttt{\_wait\_for\_pod\_deletion} did not propagate \texttt{ApiException} for non-404 errors, silently swallowing cluster communication failures.
+    \item \textbf{Interface contract violation}: \texttt{K8sRoomManager.\_create\_room} returned \texttt{int | None} instead of \texttt{bool} as declared by \texttt{RoomManagerBase.\_create\_room}, breaking the Liskov substitution principle.
+\end{itemize}
+
+\paragraph{How to Run.}
+\begin{verbatim}
+poetry run pytest
+\end{verbatim}
+
+\subsubsection{End-to-End Testing.}
+
+An end-to-end test validates the full system against a live deployment.
+The test is a scripted game scenario that exercises the entire stack: client $\rightarrow$ hub matchmaking $\rightarrow$ room connection $\rightarrow$ gameplay $\rightarrow$ game over.
+
+The scenario proceeds as follows:
+\begin{enumerate}
+    \item Two players (``Daniele'' and ``Enrico'') connect to the Hub via \texttt{/matchmaking} and receive the same room assignment.
+    \item Both players join the room and wait for the countdown to start.
+    \item Each player executes a predetermined sequence of moves. The sequence is designed so that Enrico wins the game.
+    \item The test verifies that the game reaches \texttt{GAME\_OVER} state with Enrico as the winner, and that the room is properly closed and reported back to the hub.
+\end{enumerate}
+
+The E2E test runs automatically in the CD pipeline after deployment, preceded by a 300-second stabilization period to allow all hub pods to reach ready state and complete initial gossip convergence.
+This is integrated into the GitHub Actions workflow as a post-deployment verification step: if the E2E test fails, the deployment is flagged as broken.
 
 \subsection{Acceptance Testing}\label{acceptance-test}
 
