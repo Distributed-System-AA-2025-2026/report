@@ -9,7 +9,7 @@ The Hub Server adopts a \textbf{peer-to-peer overlay} architectural style, where
 No hub acts as a coordinator or leader: every instance maintains its own local copy of the cluster state and makes autonomous decisions.
 
 This choice is motivated by the AP orientation identified in the requirements.
-A leader-based architecture (e.g., Raft, Paxos) would provide strong consistency but would sacrifice availability during leader elections or network partitions.
+A leader-based architecture would provide strong consistency but would sacrifice availability during leader elections or network partitions.
 Since the Hub's primary role is matchmaking (returning a joinable room to clients), temporary inconsistencies between hubs are tolerable and self-correcting via gossip convergence or system evolving.
 
 The client-facing layer uses a standard \textbf{request-response} pattern over HTTP (via FastAPI), decoupled from the internal gossip communication.
@@ -129,7 +129,7 @@ Communication between Client and Room Server relies on compact Protocol Buffers 
 
 \paragraph{Client $\rightarrow$ Hub (HTTP).}
 The client sends a \texttt{POST /matchmaking} request.
-The hub consults its local \texttt{HubState} for a joinable room (status \texttt{ACTIVE}, \texttt{player\_count < max\_players}).
+The hub consults its local \texttt{HubState} for a joinable room (status \texttt{ACTIVE} and \texttt{player\_count < max\_players}).
 If found, the hub increments the player count, broadcasts a \texttt{ROOM\_PLAYER\_JOINED} gossip message, and returns the room's address and port.
 If no joinable room exists, the hub asks its \texttt{RoomManager} to activate a dormant room (or create a new one in K8s mode); upon success, it broadcasts \texttt{ROOM\_ACTIVATED} and returns the new room's details.
 If activation fails, the hub returns HTTP 503. The interaction between client and hub is shown in figure \ref{fig:client-hub-interaction}
