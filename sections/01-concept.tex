@@ -37,7 +37,7 @@ The necessity for distribution is justified by the following factors:
 \subsubsection{Hub Server}
 
 The Hub Server acts as the entry point for the distributed system.
-From a CAP theorem perspective, it is \textbf{AP-oriented}: its primary goal is to guarantee Availability and Partition Tolerance, accepting eventual consistency across hub instances.
+From a CAP theorem perspective \cite{brewer2000cap, gilbert2002cap}, it is \textbf{AP-oriented}: its primary goal is to guarantee Availability and Partition Tolerance, accepting eventual consistency across hub instances.
 
 Multiple Hub Server instances form a peer-to-peer overlay network, where each hub maintains a local view of the cluster state (known peers, active rooms, player counts).
 Hubs synchronize this state through a gossip protocol, handling two categories of events: peer lifecycle (join, leave, failure detection) and room lifecycle (activation, player joins, game start, closure).
