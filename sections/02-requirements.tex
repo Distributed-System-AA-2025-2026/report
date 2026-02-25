@@ -15,7 +15,7 @@ This component is responsible for managing the cluster of hubs, coordinating pee
 
     \item \textbf{Gossip-Based State Synchronization}
     \begin{itemize}
-        \item Hubs must propagate cluster events (peer lifecycle changes, room state transitions) using a gossip protocol over UDP, with Proto Buf as the serialization format.
+        \item Hubs must propagate cluster events (peer lifecycle changes, room state transitions) using a gossip protocol \cite{demers1987epidemic} over UDP, with Proto Buf as the serialization format.
         \item Message forwarding must use a fanout-bounded strategy: each hub forwards a received message to at most \texttt{HUB\_FANOUT}\footnote{\texttt{HUB\_FANOUT} = 4 by default} peers, preventing message storms while ensuring dissemination.
         \item Duplicate messages must be detected and discarded using nonce based information.
         \item \textit{Acceptance Criterion:} A \texttt{ROOM\_ACTIVATED} event originating from one hub is received by all alive hubs in the cluster.

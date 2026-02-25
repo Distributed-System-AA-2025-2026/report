@@ -177,7 +177,7 @@ Once a client connects to the Room Server, the interaction follows an \textbf{As
 \begin{enumerate}
   \item \textbf{Input Collection}: Clients send actions messages at varying frequencies based on user input. 
   The Room Server asynchronously receives these and places them into a thread-safe input queue.
-  \item \textbf{Tick-Based Broadcast}: The Room Server does not respond to inputs immediately.
+  \item \textbf{Tick-Based Broadcast}: The Room Server does not respond to inputs immediately \cite{nystrom2014game}.
   Instead, at a fixed frequency (e.g., 10 Hz), a dedicated game loop thread processes all queued inputs, updates the game state, and broadcasts the resulting snapshot to all connected clients simultaneously.
 \end{enumerate}
 

@@ -11,7 +11,7 @@ The Hub Server uses two distinct network protocols, chosen to match the communic
 \begin{itemize}
   \item \textbf{UDP} for inter-hub gossip communication. UDP is chosen because gossip messages are small (single protobuf-encoded datagrams), stateless, and tolerant to occasional loss. The gossip protocol's redundant forwarding inherently compensates for dropped packets, making TCP's reliability guarantees unnecessary overhead. The socket is bound to \texttt{0.0.0.0} on the configured \texttt{GOSSIP\_PORT}, and each received datagram is handled in a dedicated thread to avoid blocking the receive loop.
 
-  \item \textbf{HTTP} for client-facing and room-facing APIs. HTTP is used because these interactions follow a request-response pattern where the caller needs a confirmation (e.g., the client needs room connection details, the Room Server needs acknowledgment of lifecycle events). The HTTP layer is served by \textbf{Uvicorn} (ASGI server) with \textbf{FastAPI} as the framework.
+  \item \textbf{HTTP} for client-facing and room-facing APIs. HTTP is used because these interactions follow a request-response pattern where the caller needs a confirmation (e.g., the client needs room connection details, the Room Server needs acknowledgment of lifecycle events). The HTTP layer is served by \textbf{Uvicorn} \cite{uvicorn} (ASGI server) with \textbf{FastAPI} \cite{fastapi} as the framework.
 \end{itemize}
 
 \subsubsection{Data Representation}

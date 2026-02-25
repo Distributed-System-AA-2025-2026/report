@@ -66,7 +66,7 @@ The Room Server unit test suite covers all source files.
 Given the authoritative nature of the Room Server, the testing strategy focuses heavily on \textbf{deterministic state transitions} and \textbf{crash recovery scenarios}.
 Every test verifies observable state changes, fault tolerance behavior, or network protocol correctness, rather than internal implementation details.
 
-All tests use \texttt{pytest} as the test runner, with \texttt{unittest.mock} for dependency isolation.
+All tests use \texttt{pytest} \cite{pytest} as the test runner, with \texttt{unittest.mock} for dependency isolation.
 Infrastructure components (TCP sockets, file I/O, threading, HTTP clients) are mocked at the boundary, allowing tests to exercise full business logic without external dependencies.
 This isolation strategy enables simulation of complex failure scenarios: network partitions during client broadcasts, disk failures during autosave, corrupted persistence files, and simultaneous player disconnections.
 
