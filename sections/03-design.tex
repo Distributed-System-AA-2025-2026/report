@@ -106,7 +106,7 @@ Each hub maintains:
 \paragraph{Domain Entities.}
 \begin{itemize}
   \item \textbf{Game Engine}: The aggregate root representing the entire match state. 
-  It contains the grid, the list of players, active bombs, and power-ups.
+  It contains the grid, the list of players, and active bombs.
   \item \textbf{Player}: Represents an in-game player, tracking coordinates player's ID, position, alive/dead status, and if they are the owner of a bomb.
   \item \textbf{Bomb}: Represents a bomb placed on the grid, tracking its position, owner, explosion timer, and blast range.
 \end{itemize}
@@ -280,7 +280,7 @@ The reentrant property is used because some methods (e.g., \texttt{mark\_forward
 \paragraph{Stored Data.}
 The Room Server persists the game state to disk. 
 The \texttt{Game Engine} class, which encapsulates the entire match state, is periodically serialized and saved as a Python pickle file (\texttt{.pkl}). 
-While active gameplay reads and writes to RAM for low-latency performance, dumping the state to a \texttt{.pkl} file provides a persistent snapshot of the game. 
+While active gameplay reads and writes to RAM, dumping the state to a \texttt{.pkl} file provides a persistent snapshot of the game. 
 This file-based storage acts as a localized persistence mechanism, allowing the server to maintain a recoverable state of the match.
 
 \paragraph{Concurrent Access and Consistency.}
@@ -348,7 +348,7 @@ By periodically serializing and dumping the \texttt{Game Engine} state to a \tex
 
 \paragraph{Error Handling and Disconnections.}
 \begin{itemize}
-  \item \textbf{Server Failure \& Recovery}: If a Room Server process crashes unexpectedly, the match state is not permanently lost. Upon restart, the server can deserialize the latest \texttt{.pkl} snapshot to restore the \texttt{Game Engine}. 
+  \item \textbf{Server Failure and Recovery}: If a Room Server process crashes unexpectedly, the match state is not permanently lost. Upon restart, the server can deserialize the latest \texttt{.pkl} snapshot to restore the \texttt{Game Engine}. 
   This allows the match to resume from the last saved checkpoint, losing only the transient inputs that occurred after the last disk write. 
   The checkpoint is considered a best-effort recovery mechanism, as it does not guarantee zero data loss, but it significantly reduces the impact of server failures.
   The saved state is considered invalid if it is older than a configured threshold (e.g., 30 seconds), in which case the server starts a new match instead of attempting recovery.
@@ -439,5 +439,3 @@ The Room Server validates every request against the game rules (e.g., checking f
 \paragraph{Cryptography.}
 Like the Hub Server, the Room Server relies on unencrypted TCP streams. 
 While vulnerable to packet sniffing, it is deemed acceptable for the purpose of this application.
-\newline
-\textbf{Please note:} a HTTPS tunnel exists between the client and the nginx front-end server.
